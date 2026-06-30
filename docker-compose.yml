@@ -1,0 +1,34 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-apihub}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-apihub}
+      POSTGRES_DB: ${POSTGRES_DB:-apihub}
+    volumes:
+      - apihub_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-apihub}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    restart: unless-stopped
+    ports:
+      - '${APP_PORT:-3000}:3000'
+    environment:
+      AUTH_USERNAME: ${AUTH_USERNAME}
+      AUTH_PASSWORD: ${AUTH_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET}
+      # Points at the bundled `postgres` service by default. Set DATABASE_URL
+      # in .env instead if you want to use an external/managed Postgres.
+      DATABASE_URL: ${DATABASE_URL:-postgres://${POSTGRES_USER:-apihub}:${POSTGRES_PASSWORD:-apihub}@postgres:5432/${POSTGRES_DB:-apihub}}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  apihub_postgres_data:

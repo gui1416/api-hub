@@ -1,0 +1,34 @@
+# Environment variables
+.env*.local
+.env*
+!.env.example
+
+# Dependencies
+node_modules
+
+# Next.js build output
+.next/
+out/
+next-env.d.ts.bak
+
+# Production build artifacts
+/build
+*.tsbuildinfo
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+Thumbs.db
+
+# Runtime data (legacy specs registry, no longer used now that specs
+# are persisted in Postgres — kept ignored in case it reappears locally)
+/data
+
+# Vercel
+.vercel
