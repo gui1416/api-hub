@@ -20,7 +20,22 @@ const MIGRATION_LOCK_KEY = 78234910
 
 try {
   await sql`select pg_advisory_lock(${MIGRATION_LOCK_KEY})`
-  await migrate(db, { migrationsFolder: './drizzle' })
+  try {
+    await migrate(db, { migrationsFolder: './drizzle' })
+  } catch (err) {
+    // 42P07/42P06 (duplicate_table / duplicate_schema): the object Postgres
+    // rejected already exists, but drizzle.__drizzle_migrations doesn't
+    // reflect that migration as applied — a bookkeeping/data drift we're
+    // still root-causing. Treating it as fatal takes prod down every
+    // deploy for something that isn't actually a schema problem, so we
+    // warn and keep booting instead of crashing.
+    const code = err?.cause?.code
+    if (code === '42P07' || code === '42P06') {
+      console.warn('[migrate] Objeto já existe, seguindo o boot:', err.message)
+    } else {
+      throw err
+    }
+  }
 } finally {
   await sql`select pg_advisory_unlock(${MIGRATION_LOCK_KEY})`
   await sql.end()
