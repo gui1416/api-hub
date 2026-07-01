@@ -8,6 +8,13 @@
       "when": 1782849155298,
       "tag": "0000_giant_phalanx",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1782899672538,
+      "tag": "0001_windy_thing",
+      "breakpoints": true
     }
   ]
 }

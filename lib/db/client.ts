@@ -3,7 +3,6 @@ import postgres from 'postgres'
 import * as schema from './schema'
 
 declare global {
-  // eslint-disable-next-line no-var
   var __apihubDb: ReturnType<typeof createDb> | undefined
 }
 
@@ -20,3 +19,7 @@ function createDb() {
 // pool on every module reload.
 export const db = global.__apihubDb ?? createDb()
 if (process.env.NODE_ENV !== 'production') global.__apihubDb = db
+
+// A db-like handle that's either the top-level client or an in-flight
+// transaction — lets store/audit helpers compose atomically via db.transaction.
+export type DbOrTx = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0]
