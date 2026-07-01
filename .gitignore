@@ -32,3 +32,6 @@ Thumbs.db
 
 # Vercel
 .vercel
+
+.playwright-mcp
+.claude
