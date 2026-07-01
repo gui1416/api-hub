@@ -30,12 +30,20 @@ function extractIp(request: Request): string | null {
  * failed insert as a failure of the action being audited (strict mode).
  */
 export async function logAudit(entry: AuditEntry, tx: DbOrTx = db): Promise<void> {
-  await tx.insert(auditLogs).values({
-    action: entry.action,
-    actor: entry.actor,
-    status: entry.status,
-    metadata: entry.metadata ?? null,
-    ip: entry.request ? extractIp(entry.request) : null,
-    userAgent: entry.request?.headers.get('user-agent') ?? null,
-  })
+  try {
+    await tx.insert(auditLogs).values({
+      action: entry.action,
+      actor: entry.actor,
+      status: entry.status,
+      metadata: entry.metadata ?? null,
+      ip: entry.request ? extractIp(entry.request) : null,
+      userAgent: entry.request?.headers.get('user-agent') ?? null,
+    })
+  } catch (err) {
+    // TODO(debug): remove once the production audit_logs insert failure is
+    // root-caused — callers swallow this into a generic 500, so without
+    // this it's invisible in logs.
+    console.error('[audit] insert failed:', err)
+    throw err
+  }
 }
