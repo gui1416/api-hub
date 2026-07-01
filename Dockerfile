@@ -6,7 +6,7 @@ WORKDIR /app
 # ---- Dependencies for the build (includes devDependencies) ----
 FROM base AS deps
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN npm install
 
 # ---- Build the Next.js app ----
 FROM base AS builder
@@ -17,7 +17,7 @@ RUN npm run build
 # ---- Production-only dependencies (full install, no tracing gaps) ----
 FROM base AS prod-deps
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+RUN npm install --omit=dev
 
 # ---- Final runtime image ----
 FROM base AS runner

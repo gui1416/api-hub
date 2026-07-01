@@ -17,8 +17,21 @@ function createDb() {
 
 // Reuse the connection across hot reloads in dev instead of opening a new
 // pool on every module reload.
-export const db = global.__apihubDb ?? createDb()
-if (process.env.NODE_ENV !== 'production') global.__apihubDb = db
+function getDb() {
+  if (!global.__apihubDb) {
+    global.__apihubDb = createDb()
+  }
+  return global.__apihubDb
+}
+
+// Lazy: the real connection (and its DATABASE_URL check) is only created on
+// first use, not on import — Next's build-time page-data collection imports
+// every route module, and that must succeed without DATABASE_URL set.
+export const db = new Proxy({} as ReturnType<typeof createDb>, {
+  get(_target, prop, receiver) {
+    return Reflect.get(getDb(), prop, receiver)
+  },
+})
 
 // A db-like handle that's either the top-level client or an in-flight
 // transaction — lets store/audit helpers compose atomically via db.transaction.
