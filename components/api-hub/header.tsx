@@ -9,11 +9,13 @@ export function Header({
   loading,
   onOpenSwitcher,
   onToggleSidebar,
+  onHome,
 }: {
   title: string
   loading: boolean
   onOpenSwitcher: () => void
   onToggleSidebar: () => void
+  onHome: () => void
 }) {
   return (
     <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-border bg-background/80 px-4 backdrop-blur-md xl:px-6">
@@ -26,7 +28,11 @@ export function Header({
         <Menu className="size-4" />
       </button>
 
-      <div className="flex items-center gap-2.5">
+      <button
+        type="button"
+        onClick={onHome}
+        className="flex items-center gap-2.5 rounded-md transition-opacity hover:opacity-80"
+      >
         <span className="flex size-7 items-center justify-center rounded-md bg-brand text-brand-foreground">
           <Boxes className="size-4" />
         </span>
@@ -41,7 +47,7 @@ export function Header({
             {title}
           </span>
         </div>
-      </div>
+      </button>
 
       <div className="ml-auto flex items-center gap-2">
         <button

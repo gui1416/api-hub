@@ -109,6 +109,7 @@ export function ApiHub({
         loading={loading}
         onOpenSwitcher={() => setSwitcherOpen(true)}
         onToggleSidebar={() => setMobileNavOpen((v) => !v)}
+        onHome={handleHome}
       />
 
       <SpecSwitcher
@@ -167,7 +168,11 @@ export function ApiHub({
           className={cn('scrollbar-thin min-w-0 flex-1 overflow-y-auto')}
         >
           {selectedOperation ? (
-            <EndpointView operation={selectedOperation} spec={spec} />
+            <EndpointView
+              operation={selectedOperation}
+              spec={spec}
+              sourceUrl={sourceUrl}
+            />
           ) : (
             <Overview spec={spec} onSelect={handleSelect} />
           )}

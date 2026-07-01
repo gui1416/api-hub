@@ -27,14 +27,31 @@ function statusTone(status: string): string {
   return 'text-muted-foreground'
 }
 
+function resolveBaseUrl(spec: ParsedSpec, sourceUrl: string | null): string {
+  const declared = spec.servers[0]?.url
+  if (declared) return declared
+
+  if (sourceUrl) {
+    try {
+      return new URL(sourceUrl).origin
+    } catch {
+      // fall through to the placeholder below
+    }
+  }
+
+  return 'https://api.example.com'
+}
+
 export function EndpointView({
   operation,
   spec,
+  sourceUrl,
 }: {
   operation: ParsedOperation
   spec: ParsedSpec
+  sourceUrl: string | null
 }) {
-  const baseUrl = spec.servers[0]?.url ?? 'https://api.example.com'
+  const baseUrl = resolveBaseUrl(spec, sourceUrl)
   const pathParams = operation.parameters.filter((p) => p.in === 'path')
   const queryParams = operation.parameters.filter((p) => p.in === 'query')
   const headerParams = operation.parameters.filter((p) => p.in === 'header')
