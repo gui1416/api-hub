@@ -50,23 +50,46 @@ npm run dev                # http://localhost:3000
 ### Scripts
 
 ```bash
-npm run dev      # servidor de desenvolvimento (next dev)
-npm run build    # build de produção
-npm run start    # roda o build de produção (precisa de `npm run build` antes)
-npm run lint     # eslint .
+npm run dev              # servidor de desenvolvimento (next dev)
+npm run build            # build de produção
+npm run start            # roda o build de produção (precisa de `npm run build` antes)
+npm run lint             # eslint .
+npm test                 # testes unitários (Vitest, sem banco)
+npm run test:integration # testes de integração (Vitest, precisa de DATABASE_URL)
 ```
 
-> Não há suíte de testes configurada neste repositório. O build (`next.config.mjs` define `typescript.ignoreBuildErrors: true`) não falha por erros de tipo — use `npx tsc --noEmit` para checagem de tipos real.
+> O build (`next.config.mjs` define `typescript.ignoreBuildErrors: true`) não falha por erros de tipo — use `npx tsc --noEmit` para checagem de tipos real.
 
-### Banco de dados (registro de specs)
+### Testes
 
-O schema vive em `lib/db/schema.ts` (tabela única `specs`), a conexão singleton em `lib/db/client.ts`. O CLI do Drizzle é orientado por `drizzle.config.ts`:
+- **Unitários** (`npm test`) — ficam ao lado do código-fonte (`arquivo.test.ts`), cobrem lógica pura (`lib/openapi/*`, `lib/slug.ts`, `lib/auth.ts`) e não precisam de banco.
+- **Integração** (`npm run test:integration`) — ficam em `tests/integration/`, rodam contra um Postgres real (nada de mockar o Drizzle) e cobrem `lib/specs-store.ts`, `lib/audit.ts` e os route handlers de auth/specs/proxy chamados diretamente como função. Exigem `DATABASE_URL` apontando para um banco já migrado:
+
+  ```bash
+  DATABASE_URL=postgres://test:test@localhost:5432/api_hub_test npx drizzle-kit migrate
+  DATABASE_URL=postgres://test:test@localhost:5432/api_hub_test npm run test:integration
+  ```
+
+### Banco de dados (registro de specs + auditoria)
+
+O schema vive em `lib/db/schema.ts` (tabelas `specs` e `audit_logs`), a conexão singleton em `lib/db/client.ts`. O CLI do Drizzle é orientado por `drizzle.config.ts`:
 
 ```bash
 npx drizzle-kit generate   # cria uma nova migração a partir de mudanças no schema.ts
 npx drizzle-kit migrate    # aplica migrações pendentes em DATABASE_URL
 npx drizzle-kit studio     # navega pelo banco
 ```
+
+### Auditoria e retenção de logs
+
+Toda ação sensível (login, logout, criar/atualizar/remover spec, requisição via proxy) grava uma linha em `audit_logs` (`lib/audit.ts#logAudit`) com `action`, `actor`, `status`, `metadata`, `ip` e `user-agent` — nunca headers/bodies de requisição (podem conter tokens/PII). O modo é **estrito**: se o insert do log de auditoria falhar, a ação principal é rejeitada (`500`) em vez de seguir sem deixar rastro. Para `spec.created`/`spec.updated`/`spec.deleted` isso acontece dentro da mesma transação Postgres do `saveSpec`/`deleteSpec`, então uma falha no log também desfaz a alteração da spec.
+
+A retenção é de **1 ano**: `scripts/audit-cleanup.mjs` remove linhas de `audit_logs` com mais de 1 ano (`DELETE ... WHERE created_at < now() - interval '1 year'`). Esse script não roda dentro da própria aplicação — é acionado externamente via uma **Scheduled Task do Coolify** (a plataforma de deploy), configurada com:
+
+- Comando: `node scripts/audit-cleanup.mjs`
+- Agendamento: `0 3 * * *` (diariamente às 03:00)
+
+Como a Scheduled Task do Coolify executa dentro do container já em produção, o script tem acesso direto a `DATABASE_URL` do ambiente sem precisar de nenhum endpoint HTTP novo ou segredo adicional.
 
 ## Deploy com Docker
 
@@ -102,6 +125,10 @@ docker run -d \
   --name api-hub \
   api-hub
 ```
+
+## CI
+
+`.github/workflows/ci.yml` roda em push/PR para `main`: `lint-and-typecheck` (eslint + `tsc --noEmit`), `unit-tests` (`npm test`), `integration-tests` (Postgres como serviço do workflow + `npm run test:integration`) e `build` (`npm run build`). Não há job de deploy — CD fica fora de escopo por enquanto.
 
 ## Arquitetura (visão geral)
 

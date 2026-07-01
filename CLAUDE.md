@@ -9,29 +9,41 @@ API Hub — a Next.js app that turns any OpenAPI/Swagger spec (JSON or YAML, by 
 ## Commands
 
 ```bash
-npm run dev      # start dev server (next dev)
-npm run build    # production build
-npm run start    # run production build
-npm run lint     # eslint .
+npm run dev               # start dev server (next dev)
+npm run build              # production build
+npm run start              # run production build
+npm run lint                # eslint .
+npm test                    # unit tests (Vitest, no DB required)
+npm run test:integration    # integration tests (Vitest, needs DATABASE_URL against a migrated Postgres)
 ```
 
-There is no test suite configured in this repo.
+Unit tests live next to their source file (`foo.test.ts` beside `foo.ts`), config in `vitest.config.ts`. Integration tests live in `tests/integration/*.test.ts` (config `vitest.integration.config.ts`), run against a real Postgres (no mocking Drizzle) with route handlers invoked directly as functions (e.g. `POST(new Request(...))`).
 
 Note: `next.config.mjs` sets `typescript.ignoreBuildErrors: true`, so `npm run build` will succeed even with type errors — run `tsc --noEmit` (or rely on editor diagnostics) if you need real type-checking signal.
 
+`.github/workflows/ci.yml` runs `lint-and-typecheck`, `unit-tests`, `integration-tests` (Postgres service container), and `build` on push/PR to `main`. No CD/deploy job.
+
 ### Required env vars
 
-Set in `.env` (see `.env.example`): `AUTH_USERNAME`, `AUTH_PASSWORD` (the single shared login), `JWT_SECRET` (signs the session JWT), and `DATABASE_URL` (Postgres connection string for the specs registry). Without these, login, every middleware-protected route, and any `/docs` page fail.
+Set in `.env` (see `.env.example`): `AUTH_USERNAME`, `AUTH_PASSWORD` (the single shared login), `JWT_SECRET` (signs the session JWT), and `DATABASE_URL` (Postgres connection string for the specs registry and audit log). Without these, login, every middleware-protected route, and any `/docs` page fail.
 
-### Database (specs registry)
+### Database (specs registry + audit log)
 
-Postgres via Drizzle ORM (`drizzle-orm/postgres-js`). Schema lives in `lib/db/schema.ts` (single `specs` table), the connection singleton in `lib/db/client.ts` (cached on `globalThis` so dev hot-reload doesn't open a new pool per edit). `drizzle.config.ts` drives the CLI:
+Postgres via Drizzle ORM (`drizzle-orm/postgres-js`). Schema lives in `lib/db/schema.ts` (`specs` and `audit_logs` tables), the connection singleton in `lib/db/client.ts` (cached on `globalThis` so dev hot-reload doesn't open a new pool per edit). `drizzle.config.ts` drives the CLI:
 
 ```bash
 npx drizzle-kit generate   # create a new SQL migration from schema.ts changes
 npx drizzle-kit migrate    # apply pending migrations to DATABASE_URL
 npx drizzle-kit studio     # browse the DB
 ```
+
+### Audit log
+
+`lib/audit.ts#logAudit()` writes one row per sensitive action (`auth.login`, `auth.logout`, `spec.created`, `spec.updated`, `spec.deleted`, `proxy.request`) to `audit_logs`, capturing `actor` (the shared account's username, or `'anonymous'`), `status` (`success`/`failure`), a redacted `metadata` blob (for `proxy.request`: `{ method, url, status, durationMs }` — deliberately never headers/bodies), plus `ip`/`user-agent` pulled off the `Request` via `lib/auth.ts#getSessionFromRequest`. It's called from `app/api/auth/login`, `app/api/auth/logout`, `app/api/specs`, `app/api/specs/[slug]`, and `app/api/proxy`.
+
+Audit logging is **strict**: if the insert fails, `logAudit` throws and the route responds `500` instead of completing the action — availability is traded for a complete audit trail. For spec create/update/delete, `lib/specs-store.ts#saveSpec`/`deleteSpec` accept an optional `tx` (`lib/db/client.ts`'s `DbOrTx` type) so the route can wrap the store call and `logAudit` in the same `db.transaction`, rolling back the spec change if the audit insert fails. For login/logout/proxy there's no store mutation to roll back, so a failed audit insert just turns the response into a `500`.
+
+Retention is 1 year, enforced by `scripts/audit-cleanup.mjs` (`DELETE FROM audit_logs WHERE created_at < now() - interval '1 year'`), run out-of-band via a Coolify Scheduled Task — not a cron inside the app. See README.md's "Auditoria e retenção de logs" section.
 
 ## Architecture
 

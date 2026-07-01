@@ -31,6 +31,25 @@ export async function verifySessionToken(
   }
 }
 
+/**
+ * Reads the session cookie straight off a Request's `Cookie` header (rather
+ * than next/headers' cookies(), which requires Next's request context and
+ * isn't available when route handlers are invoked directly, e.g. in tests).
+ */
+export async function getSessionFromRequest(
+  request: Request,
+): Promise<{ sub: string } | null> {
+  const cookieHeader = request.headers.get('cookie')
+  if (!cookieHeader) return null
+  const match = cookieHeader
+    .split(';')
+    .map((part) => part.trim())
+    .find((part) => part.startsWith(`${SESSION_COOKIE}=`))
+  if (!match) return null
+  const token = decodeURIComponent(match.slice(SESSION_COOKIE.length + 1))
+  return verifySessionToken(token)
+}
+
 export const sessionCookieOptions = {
   httpOnly: true,
   secure: process.env.NODE_ENV === 'production',
