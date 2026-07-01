@@ -94,3 +94,8 @@ export async function saveSpec(input: SaveSpecInput): Promise<SpecRecord> {
     .returning()
   return toRecord(created)
 }
+
+export async function deleteSpec(slug: string): Promise<boolean> {
+  const deleted = await db.delete(specs).where(eq(specs.slug, slug)).returning()
+  return deleted.length > 0
+}

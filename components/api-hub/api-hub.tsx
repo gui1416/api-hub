@@ -2,7 +2,7 @@
 
 import { CircleAlert } from 'lucide-react'
 import { useRouter } from 'next/navigation'
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { parseOpenAPI } from '@/lib/openapi/parser'
 import { apiHubSpec } from '@/lib/openapi/api-hub-spec'
@@ -12,6 +12,7 @@ import { EndpointView } from './endpoint-view'
 import { Header } from './header'
 import { Overview } from './overview'
 import { Sidebar } from './sidebar'
+import { SpecSwitcher } from './spec-switcher'
 
 export function ApiHub({
   initialRawSpec,
@@ -26,7 +27,19 @@ export function ApiHub({
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
+  const [switcherOpen, setSwitcherOpen] = useState(false)
   const router = useRouter()
+
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        setSwitcherOpen((v) => !v)
+      }
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [])
 
   const spec = useMemo(() => parseOpenAPI(rawSpec), [rawSpec])
 
@@ -93,10 +106,17 @@ export function ApiHub({
     <div className="flex h-dvh flex-col overflow-hidden bg-background">
       <Header
         title={spec.info.title ?? 'Documentação'}
+        loading={loading}
+        onOpenSwitcher={() => setSwitcherOpen(true)}
+        onToggleSidebar={() => setMobileNavOpen((v) => !v)}
+      />
+
+      <SpecSwitcher
+        open={switcherOpen}
+        onOpenChange={setSwitcherOpen}
         sourceUrl={sourceUrl}
         loading={loading}
         onLoad={loadSpec}
-        onToggleSidebar={() => setMobileNavOpen((v) => !v)}
       />
 
       {loadError && (
