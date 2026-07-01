@@ -209,7 +209,7 @@ export function SpecSwitcher({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Remover spec?</AlertDialogTitle>
-            <AlertDialogDescription className="break-words">
+            <AlertDialogDescription>
               Isso remove &quot;{pendingDelete?.title}&quot; da lista de specs
               registradas. A fonte original ({pendingDelete?.sourceUrl}) não é
               afetada — a spec pode ser carregada de novo pela URL a qualquer

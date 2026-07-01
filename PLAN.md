@@ -1,104 +1,141 @@
-# Plano: responsividade do AlertDialog + toasts (sonner)
+# Plano: suporte completo a specs Swagger 2.0
 
-## Contexto / estado atual
+## Teste de referência
 
-- `components/ui/alert-dialog.tsx` e `components/ui/sonner.tsx` já foram gerados
-  pelo usuário via CLI oficial do shadcn (`base-nova` style, `@base-ui/react`).
-- `components/ui/sonner.tsx` importa `useTheme` de `next-themes`, mas o projeto
-  **não** usa `next-themes` — o dark mode é manual (`app/layout.tsx`, script
-  inline + `localStorage['apihub-theme']`, toggla a classe `.dark` no `<html>`).
-  Sem `ThemeProvider` do `next-themes` no topo da árvore, o hook cai no
-  `defaultContext` da lib (`theme: undefined` → o componente usa o fallback
-  `"system"`), ou seja, o Toaster sempre seguiria o tema do SO via
-  `prefers-color-scheme`, ignorando o toggle manual do app. Precisa de um
-  pequeno ajuste local (ler a classe `.dark` do `document.documentElement`)
-  em vez de depender do `next-themes`.
-- Estado do `node_modules` está incerto: uma sequência de instalações
-  concorrentes (Windows-side `npm install sonner` em background + shadcn CLI
-  rodando dentro do WSL) deixou `node_modules/next` corrompido (`ENOTEMPTY`
-  em `dist/server`, `dist/esm`) e uma tentativa de `rm -rf node_modules` foi
-  interrompida pelo usuário no meio. **Precisa verificar o estado real antes
-  de mexer em mais nada** (rodar `npm install`/`npm ls next-themes sonner`
-  primeiro).
+`https://www.rhid.com.br/v2/swagger.svc/swagger.json` — baixei e inspecionei:
+`swagger: "2.0"`, sem `openapi`, sem `servers` (usa `host`/`basePath`), 25
+paths, parâmetros de corpo como `{ name, in: "body", schema: { $ref:
+"#/definitions/..." } }`, schemas em `definitions` (não
+`components.schemas`), respostas com `schema` direto no objeto de resposta
+(não em `content["application/json"].schema`), `securityDefinitions: {}`
+(vazio — essa API específica manda o token como um parâmetro de header
+comum chamado `Authorization`, não via mecanismo de security scheme).
 
-## Passo 0 — Confirmar/consertar o ambiente
+## O que já funciona hoje
 
-1. Checar se `node_modules/next`, `node_modules/sonner`,
-   `node_modules/next-themes` estão presentes e íntegros.
-2. Confirmar que `package.json` ganhou `sonner` (e opcionalmente
-   `next-themes`, a depender da decisão do Passo 1) e que `npm run build`
-   passa limpo depois.
+- `lib/openapi/fetch-spec.ts#fetchSpec` já aceita o documento (só exige
+  `openapi` OU `swagger` no topo — linha 75).
+- `lib/openapi/spec-info.ts#extractSpecInfo` já é agnóstico de formato (só
+  lê `info.title`/`info.version`).
+- `lib/openapi/parser.ts#parseOpenAPI` já tem um fallback de servidor pra
+  Swagger 2.0 (`host`/`schemes`/`basePath` → `servers[0].url`, linhas
+  205-213).
+- `resolveRef`/`resolveSchema` são agnósticos do caminho do `$ref` (andam
+  pelos segmentos genericamente), então `#/definitions/Foo` já resolve
+  igual a `#/components/schemas/Foo` sem mudança nenhuma.
 
-## Passo 1 — Adotar `next-themes` como única fonte de verdade do tema
+## Gaps confirmados (testei rodando o parser contra o JSON real)
 
-Decisão revista: em vez de adaptar o `sonner.tsx` ao mecanismo manual, o
-`next-themes` passa a ser o único sistema de tema do app (o manual é
-removido, evitando os dois coexistindo):
+1. **Corpo da requisição (`in: "body"`) não vira `requestBody`.**
+   `lib/openapi/parser.ts#parseOpenAPI` só popula `requestBody` a partir de
+   `op.requestBody` (construção do OpenAPI 3.x, inexistente em Swagger 2.0).
+   O parâmetro `in: "body"` do Swagger 2.0 entra em `parameters` como um
+   `ParsedParameter` comum — mas `ParsedParameter['in']`
+   (`lib/openapi/types.ts:60`) só aceita
+   `'query' | 'header' | 'path' | 'cookie'`, então isso já nasce com um cast
+   inválido (`param.in as ParsedParameter['in']`, `parser.ts:141`).
+   Consequência real, confirmada lendo os consumidores:
+   `components/api-hub/try-it.tsx:73-75` filtra parâmetros só por
+   `path`/`query`/`header` — um `in: "body"` não cai em nenhum filtro e
+   simplesmente desaparece da UI. Como `operation.requestBody` nunca é
+   populado pra Swagger 2.0, o campo "Body" do Try It
+   (`try-it.tsx:274-275`) nunca aparece — **hoje não dá pra testar nenhum
+   POST/PUT com corpo de uma spec Swagger 2.0**.
 
-- `app/layout.tsx`: troca o script inline (`localStorage.getItem('apihub-theme')`
-  + toggle manual de `.dark`) por `<ThemeProvider attribute="class"
-  defaultTheme="dark" enableSystem={false} storageKey="apihub-theme"
-  disableTransitionOnChange>` envolvendo `{children}` — usa a mesma chave de
-  `localStorage` (`apihub-theme`) que o script antigo já usava, então a
-  preferência já salva pelos usuários continua válida. `enableSystem={false}`
-  preserva o comportamento antigo (nunca segue `prefers-color-scheme`
-  automaticamente, sempre cai em `dark` como padrão).
-- `components/api-hub/theme-toggle.tsx`: troca a manipulação direta de
-  `classList`/`localStorage` por `useTheme()` (`resolvedTheme`/`setTheme`).
-- `components/ui/sonner.tsx`: volta a usar `useTheme()` de `next-themes`
-  (padrão gerado pelo CLI), já que agora há um `ThemeProvider` de verdade no
-  topo da árvore.
+2. **Schema de resposta não aparece.**
+   `parseResponses`/`pickContent` (`parser.ts:105-125` e `152-177`) só
+   olham `res.content["application/json"].schema` (OpenAPI 3.x). No
+   Swagger 2.0 o schema fica direto em `res.schema`. Resultado: status code
+   e descrição aparecem, mas o schema/exemplo do corpo de resposta fica
+   sempre vazio pra specs Swagger 2.0.
 
-## Passo 2 — Montar o `<Toaster />` globalmente
+3. **`consumes`/`produces` (Swagger 2.0) não são lidos.**
+   Hoje o content-type do corpo assume sempre `'application/json'`
+   implicitamente quando não há `content` (OpenAPI 3.x). Pra manter
+   consistência (e cobrir specs que usam XML/form-urlencoded via
+   `consumes`), vale ler `op.consumes`/`root.consumes` como fallback de
+   content-type — mas isso é secundário: a spec de teste já usa
+   `application/json`, então não bloqueia o teste inicial.
 
-- Adicionar `<Toaster />` em `app/layout.tsx`, dentro do `<body>`, uma única
-  vez (evita duplicar toasts se algum dia houver múltiplos layouts
-  aninhados).
+4. **`securityDefinitions` (Swagger 2.0) não é lido.**
+   `parseSecuritySchemes` (`parser.ts:179-196`) só olha
+   `components.securitySchemes`. Pra specs Swagger 2.0 que efetivamente
+   usam esse mecanismo (a de teste não usa — `securityDefinitions: {}` e
+   trata `Authorization` como header comum, então isso já funciona sem
+   mudança nenhuma pra ESSA spec), o botão de auth do Try It não
+   apareceria. Vale um fallback lendo `root.securityDefinitions` e
+   mapeando pro mesmo formato de `SecurityScheme`, mas não é bloqueante
+   pro teste com a URL dada.
 
-## Passo 3 — Deixar `components/ui/alert-dialog.tsx` mais responsivo
+## Mudanças propostas
 
-A versão gerada pelo CLI já resolve boa parte disso (`data-size`,
-`max-w-xs`/`sm:max-w-sm`, `text-balance`/`md:text-pretty`, footer
-`flex-col-reverse` → `sm:flex-row`). Ajustes adicionais a fazer em cima
-dela:
+Tudo concentrado em `lib/openapi/parser.ts` + `lib/openapi/types.ts` (a
+única "fonte da verdade" que vira `ParsedSpec`/`ParsedOperation` — nenhum
+componente de UI precisa mudar, já que todos consomem só a forma já
+normalizada):
 
-- Garantir a largura segura em telas pequenas com `max-w-[calc(100%-2rem)]`
-  no `AlertDialogContent` (sem usar scroll interno/`overflow-y-auto` — só
-  largura, sem alterar o comportamento de altura).
-- Botões de ação em largura total quando empilhados no mobile
-  (`w-full sm:w-auto` em `AlertDialogAction`/`AlertDialogCancel`), melhor
-  alvo de toque.
-- Garantir quebra de texto para URLs longas na `AlertDialogDescription`
-  (`break-all` ou `break-words` no trecho que interpola `spec.sourceUrl`,
-  em `components/api-hub/spec-switcher.tsx`, não no componente base).
+1. **`types.ts`**: nenhuma mudança em `ParsedParameter['in']` (continua sem
+   `'body'` — corpo vira `requestBody`, não fica na lista de parâmetros,
+   então o tipo já está certo do jeito que é).
 
-## Passo 4 — Adicionar toasts nas interações do usuário
+2. **`parser.ts` — extrair parâmetro de corpo pra `requestBody`:**
+   Antes de chamar `parseParameters` com a lista combinada
+   (`pathParams + opParams`), separar quem tem `in === 'body'`. Se existir
+   um (Swagger 2.0 permite no máximo um por operação) **e** `op.requestBody`
+   não existir (OpenAPI 3.x manda), montar o `requestBody` a partir dele:
+   `{ description: body.description, required: Boolean(body.required),
+   contentType: (op.consumes?.[0] ?? root.consumes?.[0] ?? 'application/json'),
+   schema: resolveSchema(root, body.schema), example: body.example }`.
+   O restante dos parâmetros (sem `in === 'body'`) segue pro
+   `parseParameters` normal.
 
-Pontos identificados (todos client components já existentes):
+3. **`parser.ts` — ler schema de resposta no formato Swagger 2.0:**
+   Em `parseResponses`, se `res.content` não existir mas `res.schema`
+   existir, tratar como
+   `{ contentType: op.produces?.[0] ?? root.produces?.[0] ?? 'application/json',
+   schema: resolveSchema(root, res.schema), example: res.examples?.['application/json'] }`
+   (Swagger 2.0 usa `res.examples` chaveado por content-type, em vez de
+   `res.example`/`res.examples[].value` do OpenAPI 3.x).
 
-1. **`components/api-hub/spec-switcher.tsx` → `handleConfirmDelete`**
-   - Sucesso: `toast.success(\`Spec "${spec.title}" deletada com sucesso.\`)`
-   - Falha (`!res.ok`): `toast.error(\`Não foi possível deletar "${spec.title}".\`)`
+4. **`parser.ts` — `securityDefinitions` (Swagger 2.0) em `parseSecuritySchemes`:**
+   Fallback lendo `root.securityDefinitions` quando
+   `components.securitySchemes` não existir, mapeando pros mesmos campos
+   de `SecurityScheme` (Swagger 2.0 usa `type: 'basic'|'apiKey'|'oauth2'`,
+   sem `scheme`/`bearerFormat` — ambos ficam `undefined`, o que já é
+   aceito pelo tipo hoje).
 
-2. **`components/api-hub/api-hub.tsx` → `loadSpec`**
-   - Sucesso (antes do `router.push`):
-     `toast.success(\`Spec "${title}" adicionada com sucesso.\`)`
-   - Falha ao carregar a URL (`!res.ok` do `/api/spec`) e falha ao registrar
-     (`!res.ok` do `/api/specs`): `toast.error(data.error ?? '...')`
-     — mantém o banner inline (`loadError`) que já existe, o toast só
-     reforça a notificação (mais visível, não depende de scroll).
-   - Erro de rede inesperado (`catch`): `toast.error(...)`.
+## Fora de escopo (não mexer agora)
 
-Fora de escopo (não mexer, a menos que o usuário peça): toasts de
-login/logout e do fluxo de "Try it" (`components/api-hub/try-it.tsx`) — o
-pedido foi especificamente sobre specs.
+- `consumes`/`produces` no nível de XML/form-urlencoded (só o fallback de
+  content-type descrito acima; não vou adicionar serialização especial
+  pra esses tipos).
+- `oauth2` flows do Swagger 2.0 (`securityDefinitions` com
+  `flow`/`authorizationUrl`/`scopes`) — o Try It de hoje não tem UI pra
+  OAuth2 nem no OpenAPI 3.x, então fica igual (fora de escopo pros dois
+  formatos).
+- Mudar `components/api-hub/try-it.tsx`, `param-table.tsx`,
+  `code-samples.ts` — não deveriam precisar de nenhuma mudança, já que
+  todos consomem só `ParsedOperation` já normalizado. Vou confirmar isso
+  na validação, mas se algo quebrar ali é sinal de que a normalização no
+  parser ficou incompleta.
 
-## Passo 5 — Validar
+## Validação
 
-- `npx tsc --noEmit` (rodar de dentro do WSL nativo pra evitar a ponte UNC).
-- `npm run lint`.
-- Rodar `npm run dev` e testar manualmente: abrir o switcher, carregar uma
-  spec nova (toast de sucesso + navegação), tentar uma URL inválida (toast
-  de erro), deletar uma spec (confirmar no AlertDialog, toast de sucesso),
-  redimensionar a janela/DevTools mobile pra conferir a responsividade do
-  AlertDialog.
+1. Testes unitários novos em `lib/openapi/parser.test.ts` (ou onde já
+   existir suíte do parser) cobrindo: parâmetro `in: "body"` virando
+   `requestBody`; resposta com `schema` direto virando
+   `ParsedResponse.schema`; `securityDefinitions` virando
+   `securitySchemes`. Usar um fixture mínimo Swagger 2.0 (não precisa ser
+   o JSON real de 60KB inteiro).
+2. `npm test` (suíte unitária, sem precisar de Postgres).
+3. Ponta a ponta manual: subir `npm run dev`, logar, carregar
+   `https://www.rhid.com.br/v2/swagger.svc/swagger.json` pela UI (Cmd+K →
+   colar URL), abrir uma operação POST (ex: `/alterarvalidadelicenca`),
+   confirmar que o campo "Body" aparece com o schema/exemplo certo, e que
+   a seção de resposta mostra o schema do 200. Não vou de fato disparar o
+   "Testar endpoint" contra esse servidor real (é uma API de terceiros com
+   auth própria) — só validar que a UI renderiza os campos certos.
+4. Regressão: recarregar a spec padrão bundled (`lib/openapi/api-hub-spec.ts`,
+   OpenAPI 3.x) e confirmar que nada mudou visualmente (garante que as
+   mudanças são aditivas/condicionais ao formato, não quebram o caminho
+   OpenAPI 3.x existente).
