@@ -3,6 +3,7 @@
 import { CircleAlert } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { parseOpenAPI } from '@/lib/openapi/parser'
 import { apiHubSpec } from '@/lib/openapi/api-hub-spec'
@@ -68,9 +69,9 @@ export function ApiHub({
         const res = await fetch(`/api/spec?url=${encodeURIComponent(url)}`)
         const data = await res.json()
         if (!res.ok) {
-          setLoadError(
-            data.error ?? 'Não foi possível carregar a especificação.',
-          )
+          const message = data.error ?? 'Não foi possível carregar a especificação.'
+          setLoadError(message)
+          toast.error(message)
           return
         }
 
@@ -84,17 +85,18 @@ export function ApiHub({
         })
         const registerData = await registerRes.json()
         if (!registerRes.ok) {
-          setLoadError(
-            registerData.error ?? 'Não foi possível registrar a especificação.',
-          )
+          const message = registerData.error ?? 'Não foi possível registrar a especificação.'
+          setLoadError(message)
+          toast.error(message)
           return
         }
 
+        toast.success(`Spec "${title}" adicionada com sucesso.`)
         router.push(`/docs/${registerData.slug as string}`)
       } catch (err) {
-        setLoadError(
-          err instanceof Error ? err.message : 'Erro de rede inesperado.',
-        )
+        const message = err instanceof Error ? err.message : 'Erro de rede inesperado.'
+        setLoadError(message)
+        toast.error(message)
       } finally {
         setLoading(false)
       }
