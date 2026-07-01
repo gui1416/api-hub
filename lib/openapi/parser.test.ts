@@ -437,3 +437,110 @@ describe('parseOpenAPI', () => {
     expect(result.operations[0].deprecated).toBe(true)
   })
 })
+
+describe('parseOpenAPI — Swagger 2.0', () => {
+  it('turns a body parameter into requestBody and excludes it from parameters', () => {
+    const spec = baseSpec({
+      swagger: '2.0',
+      definitions: { Pet: { type: 'object', properties: { name: { type: 'string' } } } },
+      paths: {
+        '/pets': {
+          post: {
+            consumes: ['application/json'],
+            parameters: [
+              { name: 'petBody', in: 'body', required: true, schema: { $ref: '#/definitions/Pet' } },
+            ],
+            responses: {},
+          },
+        },
+      },
+    })
+    const result = parseOpenAPI(spec)
+    const op = result.operations[0]
+    expect(op.parameters).toHaveLength(0)
+    expect(op.requestBody).toEqual({
+      description: undefined,
+      required: true,
+      contentType: 'application/json',
+      schema: { type: 'object', properties: { name: { type: 'string' } } },
+      example: undefined,
+    })
+  })
+
+  it('falls back to root-level consumes for the body content type', () => {
+    const spec = baseSpec({
+      swagger: '2.0',
+      consumes: ['application/xml'],
+      paths: {
+        '/pets': {
+          post: {
+            parameters: [{ name: 'petBody', in: 'body', schema: { type: 'object' } }],
+            responses: {},
+          },
+        },
+      },
+    })
+    const result = parseOpenAPI(spec)
+    expect(result.operations[0].requestBody?.contentType).toBe('application/xml')
+  })
+
+  it('does not let a Swagger 2.0 requestBody override an OpenAPI 3.x one', () => {
+    const spec = baseSpec({
+      paths: {
+        '/pets': {
+          post: {
+            requestBody: { content: { 'application/json': { schema: { type: 'string' } } } },
+            parameters: [{ name: 'legacyBody', in: 'body', schema: { type: 'object' } }],
+            responses: {},
+          },
+        },
+      },
+    })
+    const result = parseOpenAPI(spec)
+    expect(result.operations[0].requestBody?.schema).toEqual({ type: 'string' })
+  })
+
+  it('reads a response schema declared directly on the response (no content wrapper)', () => {
+    const spec = baseSpec({
+      swagger: '2.0',
+      paths: {
+        '/pets': {
+          get: {
+            produces: ['application/json'],
+            responses: {
+              '200': {
+                description: 'OK',
+                schema: { type: 'array', items: { type: 'string' } },
+                examples: { 'application/json': ['Rex'] },
+              },
+            },
+          },
+        },
+      },
+    })
+    const result = parseOpenAPI(spec)
+    const res = result.operations[0].responses[0]
+    expect(res.contentType).toBe('application/json')
+    expect(res.schema).toEqual({ type: 'array', items: { type: 'string' } })
+    expect(res.example).toEqual(['Rex'])
+  })
+
+  it('parses security schemes from securityDefinitions', () => {
+    const spec = baseSpec({
+      swagger: '2.0',
+      securityDefinitions: {
+        apiKeyAuth: { type: 'apiKey', name: 'Authorization', in: 'header' },
+      },
+    })
+    const result = parseOpenAPI(spec)
+    expect(result.securitySchemes).toEqual([
+      {
+        key: 'apiKeyAuth',
+        type: 'apiKey',
+        name: 'Authorization',
+        in: 'header',
+        description: undefined,
+      },
+    ])
+  })
+})

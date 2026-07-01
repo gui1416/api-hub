@@ -135,7 +135,10 @@ function parseParameters(
       const resolved = resolveRef(root, param.$ref as string)
       if (resolved) param = resolved
     }
-    if (!param.name || !param.in) continue
+    // Swagger 2.0 models the request body as a parameter with `in: "body"`
+    // instead of OpenAPI 3.x's `requestBody` — handled separately by
+    // parseBodyParameter, so it doesn't belong in the parameter list.
+    if (!param.name || !param.in || param.in === 'body') continue
     out.push({
       name: String(param.name),
       in: param.in as ParsedParameter['in'],
@@ -149,9 +152,38 @@ function parseParameters(
   return out
 }
 
+/**
+ * Swagger 2.0's equivalent of OpenAPI 3.x's `requestBody`: a parameter with
+ * `in: "body"` (at most one per operation), whose `schema` is the body's
+ * schema directly (no content-type-keyed wrapper).
+ */
+function parseBodyParameter(
+  root: Record<string, unknown>,
+  params: unknown[],
+  consumes: string[],
+): ParsedRequestBody | undefined {
+  for (const raw of params) {
+    let param = raw as Record<string, unknown>
+    if (param.$ref) {
+      const resolved = resolveRef(root, param.$ref as string)
+      if (resolved) param = resolved
+    }
+    if (param.in !== 'body') continue
+    return {
+      description: param.description as string | undefined,
+      required: Boolean(param.required),
+      contentType: consumes[0] ?? 'application/json',
+      schema: resolveSchema(root, param.schema as JSONSchema),
+      example: param.example,
+    }
+  }
+  return undefined
+}
+
 function parseResponses(
   root: Record<string, unknown>,
   responses: Record<string, unknown> | undefined,
+  produces: string[],
 ): ParsedResponse[] {
   if (!responses) return []
   const out: ParsedResponse[] = []
@@ -165,13 +197,34 @@ function parseResponses(
       root,
       res.content as Record<string, unknown> | undefined,
     )
-    out.push({
-      status,
-      description: res.description as string | undefined,
-      contentType: content?.contentType,
-      schema: content?.schema,
-      example: content?.example,
-    })
+    if (content) {
+      out.push({
+        status,
+        description: res.description as string | undefined,
+        contentType: content.contentType,
+        schema: content.schema,
+        example: content.example,
+      })
+      continue
+    }
+
+    // Swagger 2.0: the schema lives directly on the response object, and
+    // examples are keyed by content-type instead of OpenAPI 3.x's
+    // content[type].example(s).
+    if (isObject(res.schema)) {
+      const contentType = produces[0] ?? 'application/json'
+      const examples = res.examples as Record<string, unknown> | undefined
+      out.push({
+        status,
+        description: res.description as string | undefined,
+        contentType,
+        schema: resolveSchema(root, res.schema as JSONSchema),
+        example: examples?.[contentType],
+      })
+      continue
+    }
+
+    out.push({ status, description: res.description as string | undefined })
   }
   return out.sort((a, b) => a.status.localeCompare(b.status))
 }
@@ -183,14 +236,28 @@ function parseSecuritySchemes(
   const schemes = components?.securitySchemes as
     | Record<string, Record<string, unknown>>
     | undefined
-  if (!schemes) return []
-  return Object.entries(schemes).map(([key, value]) => ({
+  if (schemes) {
+    return Object.entries(schemes).map(([key, value]) => ({
+      key,
+      type: value.type as string | undefined,
+      scheme: value.scheme as string | undefined,
+      name: value.name as string | undefined,
+      in: value.in as string | undefined,
+      bearerFormat: value.bearerFormat as string | undefined,
+      description: value.description as string | undefined,
+    }))
+  }
+
+  // Swagger 2.0's equivalent of components.securitySchemes.
+  const definitions = root.securityDefinitions as
+    | Record<string, Record<string, unknown>>
+    | undefined
+  if (!definitions) return []
+  return Object.entries(definitions).map(([key, value]) => ({
     key,
     type: value.type as string | undefined,
-    scheme: value.scheme as string | undefined,
     name: value.name as string | undefined,
     in: value.in as string | undefined,
-    bearerFormat: value.bearerFormat as string | undefined,
     description: value.description as string | undefined,
   }))
 }
@@ -228,7 +295,22 @@ export function parseOpenAPI(doc: Record<string, unknown>): ParsedSpec {
       const opParams = Array.isArray(op.parameters)
         ? (op.parameters as unknown[])
         : []
-      const allParams = parseParameters(root, [...pathParams, ...opParams])
+      const combinedParams = [...pathParams, ...opParams]
+      const allParams = parseParameters(root, combinedParams)
+
+      // Swagger 2.0 declares accepted/returned content types per-operation
+      // (falling back to the root-level default) instead of per-content-type
+      // request/response wrappers.
+      const consumes = Array.isArray(op.consumes)
+        ? (op.consumes as string[])
+        : Array.isArray(root.consumes)
+          ? (root.consumes as string[])
+          : []
+      const produces = Array.isArray(op.produces)
+        ? (op.produces as string[])
+        : Array.isArray(root.produces)
+          ? (root.produces as string[])
+          : []
 
       let requestBody: ParsedRequestBody | undefined
       if (isObject(op.requestBody)) {
@@ -250,6 +332,9 @@ export function parseOpenAPI(doc: Record<string, unknown>): ParsedSpec {
             example: content.example,
           }
         }
+      }
+      if (!requestBody) {
+        requestBody = parseBodyParameter(root, combinedParams, consumes)
       }
 
       const tags = Array.isArray(op.tags) && op.tags.length
@@ -274,6 +359,7 @@ export function parseOpenAPI(doc: Record<string, unknown>): ParsedSpec {
         responses: parseResponses(
           root,
           op.responses as Record<string, unknown> | undefined,
+          produces,
         ),
         security: op.security as Record<string, string[]>[] | undefined,
       })
