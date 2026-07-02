@@ -9,6 +9,7 @@ import { parseOpenAPI } from '@/lib/openapi/parser'
 import { apiHubSpec } from '@/lib/openapi/api-hub-spec'
 import { extractSpecInfo } from '@/lib/openapi/spec-info'
 import type { ParsedOperation } from '@/lib/openapi/types'
+import { AiChatDialog } from './ai-chat-dialog'
 import { EndpointView } from './endpoint-view'
 import { Header } from './header'
 import { Overview } from './overview'
@@ -29,6 +30,7 @@ export function ApiHub({
   const [loadError, setLoadError] = useState<string | null>(null)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [switcherOpen, setSwitcherOpen] = useState(false)
+  const [aiChatOpen, setAiChatOpen] = useState(false)
   const router = useRouter()
 
   useEffect(() => {
@@ -36,11 +38,17 @@ export function ApiHub({
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault()
         setSwitcherOpen((v) => !v)
+        return
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'i') {
+        if (!sourceUrl) return
+        e.preventDefault()
+        setAiChatOpen((v) => !v)
       }
     }
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
-  }, [])
+  }, [sourceUrl])
 
   const spec = useMemo(() => parseOpenAPI(rawSpec), [rawSpec])
 
@@ -120,7 +128,18 @@ export function ApiHub({
         sourceUrl={sourceUrl}
         loading={loading}
         onLoad={loadSpec}
+        hasAiChat={sourceUrl !== null}
+        onOpenAiChat={() => setAiChatOpen(true)}
       />
+
+      {sourceUrl && (
+        <AiChatDialog
+          open={aiChatOpen}
+          onOpenChange={setAiChatOpen}
+          sourceUrl={sourceUrl}
+          specTitle={spec.info.title ?? 'API'}
+        />
+      )}
 
       {loadError && (
         <div className="flex items-center gap-2 border-b border-method-delete/30 bg-method-delete/10 px-4 py-2 text-[13px] text-method-delete xl:px-6">

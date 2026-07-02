@@ -8,6 +8,9 @@ export const config = {
     '/api/spec/:path*',
     '/api/specs/:path*',
     '/api/proxy/:path*',
+    '/config-ia',
+    '/api/config-ia/:path*',
+    '/api/ai/:path*',
   ],
 }
 

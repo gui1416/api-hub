@@ -8,6 +8,7 @@ export type AuditAction =
   | 'spec.updated'
   | 'spec.deleted'
   | 'proxy.request'
+  | 'ai.config_updated'
 
 export interface AuditEntry {
   action: AuditAction

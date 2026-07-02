@@ -15,6 +15,13 @@
       "when": 1782899672538,
       "tag": "0001_windy_thing",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1782935617674,
+      "tag": "0002_white_hannibal_king",
+      "breakpoints": true
     }
   ]
 }
