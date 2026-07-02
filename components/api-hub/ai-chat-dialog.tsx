@@ -82,7 +82,6 @@ export function AiChatDialog({
 
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const mentionContainerRef = useRef<HTMLDivElement>(null)
-  const assistantMsgIdRef = useRef<string | null>(null)
 
   // Load (or create) the most recent conversation for this spec, and its
   // messages, whenever the dialog opens or the spec changes.
@@ -292,7 +291,13 @@ export function AiChatDialog({
     closeMentionPopover()
     setStreaming(true)
     setAwaitingResponse(true)
-    assistantMsgIdRef.current = null
+
+    // Local to this call (not a ref mutated inside a setState updater —
+    // React Strict Mode double-invokes updaters in dev, which would create
+    // the assistant message on the first invocation, discard it because the
+    // second invocation runs against the original `prev`, and then leave
+    // every subsequent delta patching a tempId that was never inserted).
+    let assistantTempId: string | null = null
 
     const mentionedSlugs = mentionedSpecs.map((s) => s.slug)
 
@@ -335,16 +340,16 @@ export function AiChatDialog({
 
           if (event.type === 'delta') {
             const text = event.text ?? ''
-            setMessages((prev) => {
-              if (assistantMsgIdRef.current) {
-                return prev.map((m) =>
-                  m.tempId === assistantMsgIdRef.current ? { ...m, content: m.content + text } : m,
-                )
-              }
-              const tempId = crypto.randomUUID()
-              assistantMsgIdRef.current = tempId
-              return [...prev, { tempId, role: 'assistant', content: text }]
-            })
+            if (assistantTempId === null) {
+              assistantTempId = crypto.randomUUID()
+              const newTempId = assistantTempId
+              setMessages((prev) => [...prev, { tempId: newTempId, role: 'assistant', content: text }])
+            } else {
+              const tempId = assistantTempId
+              setMessages((prev) =>
+                prev.map((m) => (m.tempId === tempId ? { ...m, content: m.content + text } : m)),
+              )
+            }
           } else if (event.type === 'marker') {
             setMessages((prev) => [...prev, { role: 'system', content: event.text ?? '' }])
           } else if (event.type === 'done') {
