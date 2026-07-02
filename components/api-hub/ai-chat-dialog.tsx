@@ -605,8 +605,8 @@ export function AiChatDialog({
                                 className={cn(
                                   'max-w-[85%] rounded-lg px-3 py-2',
                                   m.role === 'user'
-                                    ? 'whitespace-pre-wrap bg-primary text-primary-foreground'
-                                    : 'bg-muted text-foreground',
+                                    ? 'ml-auto whitespace-pre-wrap bg-primary text-primary-foreground'
+                                    : 'mr-auto bg-muted text-foreground',
                                 )}
                               >
                                 {m.role === 'assistant' ? (
@@ -624,7 +624,7 @@ export function AiChatDialog({
                       <MessageScrollerItem>
                         <Message align="start">
                           <MessageContent>
-                            <div className="flex items-center gap-2 rounded-lg bg-muted px-3 py-2 text-muted-foreground">
+                            <div className="mr-auto flex items-center gap-2 rounded-lg bg-muted px-3 py-2 text-muted-foreground">
                               <Spinner className="size-4" />
                             </div>
                           </MessageContent>
