@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertCircle, Download, Info, RefreshCw, Send, X } from 'lucide-react'
 import { toast } from 'sonner'
+import ReactMarkdown, { type Components } from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -46,6 +48,51 @@ interface StreamEvent {
   [key: string]: unknown
 }
 
+// Minimal prose styling for assistant replies — no @tailwindcss/typography
+// dependency, just enough to make lists/code/links readable in a chat bubble.
+const markdownComponents: Components = {
+  p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+  ul: ({ children }) => <ul className="mb-2 list-disc space-y-1 pl-5 last:mb-0">{children}</ul>,
+  ol: ({ children }) => <ol className="mb-2 list-decimal space-y-1 pl-5 last:mb-0">{children}</ol>,
+  li: ({ children }) => <li>{children}</li>,
+  a: ({ children, href }) => (
+    <a href={href} target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-foreground">
+      {children}
+    </a>
+  ),
+  strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+  code: ({ children, className }) => {
+    const isBlock = /language-/.test(className ?? '')
+    if (isBlock) {
+      return (
+        <code className={cn('block overflow-x-auto rounded-md bg-background/60 p-2 text-xs', className)}>
+          {children}
+        </code>
+      )
+    }
+    return <code className="rounded bg-background/60 px-1 py-0.5 text-[0.85em]">{children}</code>
+  },
+  pre: ({ children }) => <pre className="mb-2 overflow-x-auto last:mb-0">{children}</pre>,
+  blockquote: ({ children }) => (
+    <blockquote className="mb-2 border-l-2 border-border pl-2 text-muted-foreground last:mb-0">
+      {children}
+    </blockquote>
+  ),
+  h1: ({ children }) => <h4 className="mb-1 font-heading text-sm font-semibold">{children}</h4>,
+  h2: ({ children }) => <h4 className="mb-1 font-heading text-sm font-semibold">{children}</h4>,
+  h3: ({ children }) => <h4 className="mb-1 font-heading text-sm font-semibold">{children}</h4>,
+}
+
+function AssistantMarkdown({ content }: { content: string }) {
+  return (
+    <div className="text-sm wrap-break-word">
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+        {content}
+      </ReactMarkdown>
+    </div>
+  )
+}
+
 function detectMentionTrigger(value: string, cursor: number): { start: number; query: string } | null {
   const uptoCursor = value.slice(0, cursor)
   const at = uptoCursor.lastIndexOf('@')
@@ -82,6 +129,61 @@ export function AiChatDialog({
 
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const mentionContainerRef = useRef<HTMLDivElement>(null)
+  // Text already received over the network but not yet revealed in the UI,
+  // plus the bookkeeping for the requestAnimationFrame loop that drains it at
+  // a steady pace — decouples how fast the provider streams tokens from how
+  // fast they visually "type out", so a very fast provider (e.g. Groq) still
+  // feels like a fluid typing animation instead of the text just appearing.
+  const pendingRevealRef = useRef('')
+  const revealRafRef = useRef<number | null>(null)
+  const pendingDoneEventRef = useRef<StreamEvent | null>(null)
+
+  const stopReveal = useCallback(() => {
+    if (revealRafRef.current !== null) {
+      cancelAnimationFrame(revealRafRef.current)
+      revealRafRef.current = null
+    }
+    pendingRevealRef.current = ''
+    pendingDoneEventRef.current = null
+  }, [])
+
+  useEffect(() => stopReveal, [stopReveal])
+
+  const startReveal = useCallback(
+    (tempId: string) => {
+      if (revealRafRef.current !== null) return
+      const tick = () => {
+        const pending = pendingRevealRef.current
+        if (pending.length > 0) {
+          // Reveal a handful of characters per frame, scaling up when a big
+          // backlog has piled up so a long response doesn't take forever to
+          // finish "typing" after the network has already delivered it.
+          const chunkSize = Math.max(2, Math.ceil(pending.length / 20))
+          const chunk = pending.slice(0, chunkSize)
+          pendingRevealRef.current = pending.slice(chunkSize)
+          setMessages((prev) =>
+            prev.map((m) => (m.tempId === tempId ? { ...m, content: m.content + chunk } : m)),
+          )
+          revealRafRef.current = requestAnimationFrame(tick)
+          return
+        }
+
+        const doneEvent = pendingDoneEventRef.current
+        if (doneEvent) {
+          pendingDoneEventRef.current = null
+          revealRafRef.current = null
+          setStreaming(false)
+          if (doneEvent.title) setConversationTitle(doneEvent.title)
+          return
+        }
+
+        // Nothing to reveal yet, but the stream isn't done — keep polling.
+        revealRafRef.current = requestAnimationFrame(tick)
+      }
+      revealRafRef.current = requestAnimationFrame(tick)
+    },
+    [],
+  )
 
   // Load (or create) the most recent conversation for this spec, and its
   // messages, whenever the dialog opens or the spec changes.
@@ -158,6 +260,8 @@ export function AiChatDialog({
 
   const handleNewConversation = useCallback(async () => {
     try {
+      stopReveal()
+      setStreaming(false)
       const res = await fetch('/api/ai/conversations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -173,7 +277,7 @@ export function AiChatDialog({
     } catch {
       toast.error('Não foi possível criar uma nova conversa.')
     }
-  }, [sourceUrl])
+  }, [sourceUrl, stopReveal])
 
   const handleRefreshContext = useCallback(async () => {
     try {
@@ -291,6 +395,7 @@ export function AiChatDialog({
     closeMentionPopover()
     setStreaming(true)
     setAwaitingResponse(true)
+    stopReveal()
 
     // Local to this call (not a ref mutated inside a setState updater —
     // React Strict Mode double-invokes updaters in dev, which would create
@@ -298,6 +403,7 @@ export function AiChatDialog({
     // second invocation runs against the original `prev`, and then leave
     // every subsequent delta patching a tempId that was never inserted).
     let assistantTempId: string | null = null
+    let receivedTerminalEvent = false
 
     const mentionedSlugs = mentionedSpecs.map((s) => s.slug)
 
@@ -343,19 +449,38 @@ export function AiChatDialog({
             if (assistantTempId === null) {
               assistantTempId = crypto.randomUUID()
               const newTempId = assistantTempId
-              setMessages((prev) => [...prev, { tempId: newTempId, role: 'assistant', content: text }])
+              setMessages((prev) => [...prev, { tempId: newTempId, role: 'assistant', content: '' }])
+              pendingRevealRef.current += text
+              startReveal(newTempId)
             } else {
-              const tempId = assistantTempId
-              setMessages((prev) =>
-                prev.map((m) => (m.tempId === tempId ? { ...m, content: m.content + text } : m)),
-              )
+              pendingRevealRef.current += text
             }
           } else if (event.type === 'marker') {
             setMessages((prev) => [...prev, { role: 'system', content: event.text ?? '' }])
           } else if (event.type === 'done') {
-            setStreaming(false)
-            if (event.title) setConversationTitle(event.title)
+            receivedTerminalEvent = true
+            if (assistantTempId === null) {
+              // No content was ever streamed (shouldn't normally happen) —
+              // nothing for the reveal loop to finish, so finalize directly.
+              setStreaming(false)
+              if (event.title) setConversationTitle(event.title)
+            } else {
+              // Let the reveal loop finish typing out whatever's still
+              // pending before flipping `streaming` back off.
+              pendingDoneEventRef.current = event
+            }
           } else if (event.type === 'error') {
+            receivedTerminalEvent = true
+            // Terminal event — flush whatever was still queued immediately
+            // rather than let it keep "typing" after the stream is over.
+            stopReveal()
+            if (assistantTempId !== null && pendingRevealRef.current) {
+              const tempId = assistantTempId
+              const rest = pendingRevealRef.current
+              setMessages((prev) =>
+                prev.map((m) => (m.tempId === tempId ? { ...m, content: m.content + rest } : m)),
+              )
+            }
             setStreaming(false)
             setMessages((prev) => [
               ...prev,
@@ -364,13 +489,29 @@ export function AiChatDialog({
           }
         }
       }
+
+      if (!receivedTerminalEvent) {
+        // The connection closed without a `done`/`error` line (e.g. the
+        // server crashed mid-stream) — don't leave the UI stuck "typing"
+        // forever.
+        stopReveal()
+        if (assistantTempId !== null && pendingRevealRef.current) {
+          const tempId = assistantTempId
+          const rest = pendingRevealRef.current
+          setMessages((prev) =>
+            prev.map((m) => (m.tempId === tempId ? { ...m, content: m.content + rest } : m)),
+          )
+        }
+        setStreaming(false)
+      }
     } catch {
+      stopReveal()
       toast.error('Erro de rede ao enviar a mensagem.')
-    } finally {
       setStreaming(false)
+    } finally {
       setAwaitingResponse(false)
     }
-  }, [input, streaming, conversationId, mentionedSpecs, closeMentionPopover])
+  }, [input, streaming, conversationId, mentionedSpecs, closeMentionPopover, stopReveal, startReveal])
 
   const handleTextareaKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -462,13 +603,17 @@ export function AiChatDialog({
                             <MessageContent>
                               <div
                                 className={cn(
-                                  'max-w-[85%] rounded-lg px-3 py-2 whitespace-pre-wrap',
+                                  'max-w-[85%] rounded-lg px-3 py-2',
                                   m.role === 'user'
-                                    ? 'bg-primary text-primary-foreground'
+                                    ? 'whitespace-pre-wrap bg-primary text-primary-foreground'
                                     : 'bg-muted text-foreground',
                                 )}
                               >
-                                {m.content}
+                                {m.role === 'assistant' ? (
+                                  <AssistantMarkdown content={m.content} />
+                                ) : (
+                                  m.content
+                                )}
                               </div>
                             </MessageContent>
                           </Message>

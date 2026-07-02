@@ -168,6 +168,7 @@ describe('runChatCompletion', () => {
     }
 
     expect(events).toEqual([
+      { type: 'marker', text: 'Consultando Groq...' },
       { type: 'delta', text: 'Olá' },
       { type: 'delta', text: ', mundo' },
       {
@@ -206,9 +207,10 @@ describe('runChatCompletion', () => {
       events.push(event)
     }
 
-    expect(events[0]).toEqual({ type: 'marker', text: 'Failing falhou, tentando Backup...' })
-    expect(events[1]).toEqual({ type: 'delta', text: 'ok' })
-    expect(events[2]).toMatchObject({ type: 'done', providerLabel: 'Backup', usedFallback: true })
+    expect(events[0]).toEqual({ type: 'marker', text: 'Consultando Failing...' })
+    expect(events[1]).toEqual({ type: 'marker', text: 'Failing falhou, tentando Backup...' })
+    expect(events[2]).toEqual({ type: 'delta', text: 'ok' })
+    expect(events[3]).toMatchObject({ type: 'done', providerLabel: 'Backup', usedFallback: true })
 
     expect(onProviderFailure).toHaveBeenCalledTimes(1)
     expect(onProviderFailure).toHaveBeenCalledWith(failing, 'auth', expect.any(Date))
@@ -226,11 +228,12 @@ describe('runChatCompletion', () => {
       events.push(event)
     }
 
-    expect(events[0]).toEqual({
+    expect(events[0]).toEqual({ type: 'marker', text: 'Consultando Solo...' })
+    expect(events[1]).toEqual({
       type: 'marker',
       text: 'Solo falhou, tentando próximo provider disponível...',
     })
-    expect(events[1]).toEqual({
+    expect(events[2]).toEqual({
       type: 'error',
       message: 'Todos os providers de IA falharam. Tente novamente mais tarde.',
     })
@@ -247,7 +250,9 @@ describe('runChatCompletion', () => {
       events.push(event)
     }
 
-    expect(events.filter((e) => e.type === 'marker')).toHaveLength(2)
+    // 1 "Consultando A..." (only the first attempt announces itself) + 2
+    // failure markers ("A falhou...", "B falhou...").
+    expect(events.filter((e) => e.type === 'marker')).toHaveLength(3)
     expect(events.at(-1)).toEqual({
       type: 'error',
       message: 'Todos os providers de IA falharam. Tente novamente mais tarde.',
@@ -278,6 +283,7 @@ describe('runChatCompletion', () => {
     }
 
     expect(events).toEqual([
+      { type: 'marker', text: 'Consultando First...' },
       { type: 'delta', text: 'partial' },
       { type: 'error', message: 'A resposta foi interrompida: falha no provider.' },
     ])

@@ -177,6 +177,10 @@ export async function* runChatCompletion(
     const startedAt = Date.now()
     let emittedDelta = false
 
+    if (isFirstAttempt) {
+      yield { type: 'marker', text: `Consultando ${provider.label}...` }
+    }
+
     try {
       const apiKey = decrypt(provider.apiKeyEncrypted)
       const client = createOpenAICompatible({

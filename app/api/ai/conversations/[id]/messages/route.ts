@@ -188,87 +188,90 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     return ndjsonResponse(singleEvent({ type: 'error', message: rateLimit.message }))
   }
 
-  let systemPrompt: string
-  try {
-    const mainParsed = await getSpecContext(conversation.specSourceUrl, () =>
-      fetchSpec(conversation!.specSourceUrl),
-    )
-    const summaries = [summarizeSpec(mainParsed)]
+  async function* buildAndStream(): AsyncGenerator<ChatEvent | (ChatEvent & { title?: string | null })> {
+    yield { type: 'marker', text: 'Carregando contexto da especificação...' }
 
-    for (const slug of mentionedSpecIds) {
-      const spec = await getSpec(slug)
-      if (!spec) continue
-      const parsed = await getSpecContext(spec.sourceUrl, () => fetchSpec(spec.sourceUrl))
-      summaries.push(summarizeSpec(parsed))
+    let systemPrompt: string
+    try {
+      const mainParsed = await getSpecContext(conversation!.specSourceUrl, () =>
+        fetchSpec(conversation!.specSourceUrl),
+      )
+      const summaries = [summarizeSpec(mainParsed)]
+
+      for (const slug of mentionedSpecIds) {
+        const spec = await getSpec(slug)
+        if (!spec) continue
+        const parsed = await getSpecContext(spec.sourceUrl, () => fetchSpec(spec.sourceUrl))
+        summaries.push(summarizeSpec(parsed))
+      }
+
+      systemPrompt =
+        'Você é um assistente que ajuda a entender a(s) API(s) documentada(s) abaixo. Responda em português. \n\n' +
+        JSON.stringify(summaries)
+    } catch {
+      yield { type: 'error', message: 'Falha ao carregar o contexto da especificação para o chat.' }
+      return
     }
 
-    systemPrompt =
-      'Você é um assistente que ajuda a entender a(s) API(s) documentada(s) abaixo. Responda em português. \n\n' +
-      JSON.stringify(summaries)
-  } catch {
-    return ndjsonResponse(
-      singleEvent({ type: 'error', message: 'Falha ao carregar o contexto da especificação para o chat.' }),
-    )
-  }
+    const historyRows = await db
+      .select()
+      .from(aiMessages)
+      .where(eq(aiMessages.conversationId, id))
+      .orderBy(desc(aiMessages.createdAt))
+      .limit(HISTORY_LIMIT)
 
-  const historyRows = await db
-    .select()
-    .from(aiMessages)
-    .where(eq(aiMessages.conversationId, id))
-    .orderBy(desc(aiMessages.createdAt))
-    .limit(HISTORY_LIMIT)
+    const history: ChatHistoryMessage[] = historyRows
+      .reverse()
+      .map((row) => ({ role: row.role === 'assistant' ? 'assistant' : 'user', content: row.content }))
 
-  const history: ChatHistoryMessage[] = historyRows
-    .reverse()
-    .map((row) => ({ role: row.role === 'assistant' ? 'assistant' : 'user', content: row.content }))
+    const eligibleProviders = await db
+      .select()
+      .from(aiProviders)
+      .where(
+        and(
+          eq(aiProviders.enabled, true),
+          or(isNull(aiProviders.cooldownUntil), lt(aiProviders.cooldownUntil, new Date())),
+        ),
+      )
+      .orderBy(asc(aiProviders.priority))
 
-  const eligibleProviders = await db
-    .select()
-    .from(aiProviders)
-    .where(
-      and(
-        eq(aiProviders.enabled, true),
-        or(isNull(aiProviders.cooldownUntil), lt(aiProviders.cooldownUntil, new Date())),
-      ),
-    )
-    .orderBy(asc(aiProviders.priority))
+    async function onProviderFailure(
+      provider: AiProviderRow,
+      _failureKind: FailureKind,
+      cooldownUntil: Date | null,
+    ) {
+      await db
+        .update(aiProviders)
+        .set({
+          failureCount: provider.failureCount + 1,
+          lastFailureAt: new Date(),
+          cooldownUntil,
+          updatedAt: new Date(),
+        })
+        .where(eq(aiProviders.id, provider.id))
+    }
 
-  async function onProviderFailure(
-    provider: AiProviderRow,
-    _failureKind: FailureKind,
-    cooldownUntil: Date | null,
-  ) {
-    await db
-      .update(aiProviders)
-      .set({
-        failureCount: provider.failureCount + 1,
-        lastFailureAt: new Date(),
-        cooldownUntil,
-        updatedAt: new Date(),
-      })
-      .where(eq(aiProviders.id, provider.id))
-  }
+    async function onProviderSuccess(provider: AiProviderRow) {
+      await db
+        .update(aiProviders)
+        .set({ failureCount: 0, cooldownUntil: null, updatedAt: new Date() })
+        .where(eq(aiProviders.id, provider.id))
+    }
 
-  async function onProviderSuccess(provider: AiProviderRow) {
-    await db
-      .update(aiProviders)
-      .set({ failureCount: 0, cooldownUntil: null, updatedAt: new Date() })
-      .where(eq(aiProviders.id, provider.id))
-  }
+    const generator = runChatCompletion({
+      providers: eligibleProviders,
+      systemPrompt,
+      history,
+      onProviderFailure,
+      onProviderSuccess,
+    })
 
-  const generator = runChatCompletion({
-    providers: eligibleProviders,
-    systemPrompt,
-    history,
-    onProviderFailure,
-    onProviderSuccess,
-  })
-
-  return ndjsonResponse(
-    persistAndStream(generator, {
+    yield* persistAndStream(generator, {
       conversationId: id,
-      conversationTitle: conversation.title,
-      userContent: content,
-    }),
-  )
+      conversationTitle: conversation!.title,
+      userContent: content!,
+    })
+  }
+
+  return ndjsonResponse(buildAndStream())
 }
