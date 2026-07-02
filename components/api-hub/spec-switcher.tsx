@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Boxes, Link2, LoaderCircle, Trash2 } from 'lucide-react'
+import { Boxes, Link2, LoaderCircle, Sparkles, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   CommandDialog,
@@ -12,6 +12,7 @@ import {
   CommandItem,
   CommandList,
   CommandSeparator,
+  CommandShortcut,
 } from '@/components/ui/command'
 import {
   AlertDialog,
@@ -40,12 +41,16 @@ export function SpecSwitcher({
   sourceUrl,
   loading,
   onLoad,
+  hasAiChat,
+  onOpenAiChat,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   sourceUrl: string | null
   loading: boolean
   onLoad: (url: string) => void
+  hasAiChat: boolean
+  onOpenAiChat: () => void
 }) {
   const router = useRouter()
   const [specs, setSpecs] = useState<SpecSummary[]>([])
@@ -191,6 +196,25 @@ export function SpecSwitcher({
                         <Link2 className="size-4 shrink-0 text-muted-foreground" />
                       )}
                       <span className="truncate">Carregar {trimmed}</span>
+                    </CommandItem>
+                  </CommandGroup>
+                </>
+              )}
+
+              {hasAiChat && (
+                <>
+                  {(specs.length > 0 || (isUrl && !alreadyRegistered)) && <CommandSeparator />}
+                  <CommandGroup heading="Assistente">
+                    <CommandItem
+                      value="conversar sobre esta api assistente ia"
+                      onSelect={() => {
+                        onOpenChange(false)
+                        onOpenAiChat()
+                      }}
+                    >
+                      <Sparkles className="size-4 shrink-0 text-muted-foreground" />
+                      Conversar sobre esta API
+                      <CommandShortcut>Ctrl+I</CommandShortcut>
                     </CommandItem>
                   </CommandGroup>
                 </>
