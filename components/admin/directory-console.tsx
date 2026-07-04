@@ -713,14 +713,14 @@ export function DirectoryConsole({
               {container === 'permissions' && 'Catálogo de permissões atribuíveis aos grupos.'}
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            <div className="relative">
+          <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+            <div className="relative min-w-0 flex-1 sm:flex-none">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder={`Buscar em ${containerLabel.toLowerCase()}...`}
-                className="h-8 w-56 pl-8 text-[13px]"
+                className="h-8 w-full pl-8 text-[13px] sm:w-56"
               />
             </div>
             {/* Container móvel (a árvore some em telas pequenas) */}

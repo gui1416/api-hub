@@ -197,7 +197,7 @@ export function ProviderUsageSheet({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-xl">
+      <SheetContent side="right" className="overflow-y-auto !w-full sm:!max-w-xl">
         <SheetHeader>
           <SheetTitle>{provider ? `Uso — ${provider.label}` : 'Uso do provider'}</SheetTitle>
           <SheetDescription>

@@ -290,14 +290,14 @@ export function ConfigIaManager({
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-8 xl:px-6">
-      <div className="mb-6 flex items-center justify-between gap-2">
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-2">
         <div>
           <h1 className="font-heading text-xl font-semibold text-foreground">Configuração de IA</h1>
           <p className="text-sm text-muted-foreground">
             Providers usados pelo assistente de chat sobre a documentação, em ordem de prioridade.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Button type="button" variant="outline" size="sm" onClick={openAddForm}>
             <Plus className="size-4" />
             Adicionar provider

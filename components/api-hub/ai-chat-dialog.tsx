@@ -691,7 +691,7 @@ export function AiChatDialog({
                 disabled={streaming || loadingConversation || !conversationId}
                 rows={2}
               />
-              <InputGroupAddon align="block-end">
+              <InputGroupAddon align="inline-end">
                 <InputGroupButton
                   type="button"
                   size="icon-sm"

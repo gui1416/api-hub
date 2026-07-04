@@ -1,205 +1,184 @@
-# Plano v2: header global, palette global, perfil de usuário, RBAC macro/micro + ACL por spec, relatório por provider
+# Plano: teste e ajuste de responsividade de todas as telas (navegador)
 
-## Status do plano v1 (multi-usuário, grupos/permissões, dashboard) — concluído
+Objetivo: percorrer **todas as telas** no navegador em vários tamanhos de viewport,
+identificar quebras de layout (overflow horizontal, texto/botão cortado, sobreposição,
+tabela estourando, dialog/sheet maior que a tela, sidebar sem fallback mobile) e
+**corrigir** com Tailwind, mantendo o padrão do repo (Tailwind v4 CSS-first, sem
+`tailwind.config`, tokens em `app/globals.css`).
 
-A revisão do código confirmou que tudo do plano anterior foi implementado:
+## Ferramentas e método
 
-- Usuários em Postgres com bcrypt, seed do primeiro admin (`scripts/seed-admin.mjs`),
-  troca forçada de senha (`/change-password`), reset com senha temporária exibida uma vez.
-- RBAC usuário → grupo(s) → permissão(ões) com catálogo editável (`lib/rbac.ts`),
-  migration `0003` seedando 7 permissões e os grupos `Administradores`/`Usuários`
-  (`isSystem`).
-- `middleware.ts` em runtime nodejs: checagem fresca de status + permissões a cada
-  request, headers `x-user-*` sobrescritos (não spoofáveis), logout forçado
-  (usuário desativado/removido cai na request seguinte + poll de 45s em
-  `components/session-provider.tsx`).
-- Telas `/admin/users`, `/admin/groups`, `/admin/dashboard` e regras de IA em
-  `/config-ia` (`ai_settings.systemPromptRules`), contexto por usuário derivado
-  (`lib/ai/context.ts#buildUserContext`), conversas de IA isoladas por usuário.
-- Auditoria strict em transação para todas as mutações administrativas.
-- Testes unitários (`lib/rbac.test.ts`, `lib/auth.test.ts`) e de integração
-  (`tests/integration/`, runner seguro `scripts/_run-integration.sh`).
+- **Playwright MCP** para dirigir o Chromium: `browser_navigate`, `browser_resize`,
+  `browser_snapshot` (árvore de acessibilidade — melhor sinal que screenshot para
+  detectar estrutura), `browser_take_screenshot` (evidência visual) e
+  `browser_console_messages` (erros de hidratação/layout).
+- **Detecção de overflow horizontal** (o defeito responsivo mais comum) via
+  `browser_evaluate` rodando no documento:
+  ```js
+  () => {
+    const de = document.documentElement;
+    const overflowX = de.scrollWidth > de.clientWidth;
+    const offenders = [...document.querySelectorAll('*')]
+      .filter(el => el.getBoundingClientRect().right > de.clientWidth + 1)
+      .slice(0, 20)
+      .map(el => ({ tag: el.tagName, cls: el.className, w: Math.round(el.getBoundingClientRect().width) }));
+    return { scrollWidth: de.scrollWidth, clientWidth: de.clientWidth, overflowX, offenders };
+  }
+  ```
+  Rodar em cada tela × cada viewport; `overflowX === false` é o critério de aprovação
+  base. Os `offenders` apontam direto o elemento a corrigir.
 
-## Lacunas encontradas na revisão (que este plano v2 fecha)
+## Viewports a testar
 
-1. **Header não está em todas as telas** — só `/docs` e a home têm header;
-   `/admin/*`, `/config-ia` e `/change-password` renderizam conteúdo sem
-   header/navegação de volta.
-2. **Command palette não é global** — `SpecSwitcher` só é montado dentro de
-   `components/api-hub/api-hub.tsx`; Cmd+K não funciona em `/`, `/admin/*`,
-   `/config-ia`.
-3. **Cadastro de usuário só tem username + grupos** — faltam name, email,
-   telefone, empresa, cargo.
-4. **Permissões com granularidade grossa** — `specs.manage` cobre carregar E
-   deletar juntos; `/api/proxy` exige só autenticação; a matriz em `/admin/groups`
-   é plana (sem separação telas/ações); não há controle por spec individual.
-5. **Provider em `/config-ia` não é clicável** — só latência média/nº de chamadas
-   agregados.
-6. **Home navega para `/docs?switcher=1`** em vez de abrir o palette na hora, e o
-   `/docs` (spec padrão bundled) não aparece como spec dentro do command.
+| Rótulo            | Larg × Alt | Foco                                              |
+|-------------------|-----------|---------------------------------------------------|
+| Mobile pequeno    | 360 × 740 | pior caso; botões/tabelas/dialogs                 |
+| Mobile (iPhone)   | 390 × 844 | caso comum                                         |
+| Tablet retrato    | 768 × 1024| breakpoint `md`; sidebar docs vira drawer          |
+| Laptop            | 1024 × 720| breakpoint `lg`                                    |
+| Desktop           | 1440 × 900| baseline atual                                     |
 
-## Decisões já tomadas com o usuário
+Breakpoints Tailwind v4 padrão em uso: `sm 640 / md 768 / lg 1024 / xl 1280`.
+Ao ajustar, preferir mobile-first (estilo base = mobile, `md:`/`lg:` para telas maiores).
 
-- RBAC controla telas + ações **e também acesso por spec individual** (ACL
-  grupo × spec).
-- Relatório do provider abre em **painel/sheet lateral** dentro de `/config-ia`.
-- Campos obrigatórios do usuário: **username, name e email** (email único);
-  telefone, empresa e cargo opcionais.
+## Pré-requisitos (setup do ambiente)
+
+1. Subir o app: `npm run dev` (Next dev, porta 3000) — rodar em background.
+2. Precisa de sessão autenticada. Fazer login via UI no `/login` com o admin
+   (usuário do `seed:admin`); se não houver admin, rodar `npm run seed:admin` antes.
+   O cookie `apihub_session` (1 dia) persiste na sessão do Playwright.
+3. Ter pelo menos **uma spec registrada** para exercitar `/docs/[slug]`, `TryIt` e o
+   chat de IA (carregar uma URL de OpenAPI pública via command palette, ou usar a
+   "Documentação do API Hub" bundled em `/docs`).
+
+## Telas e o que verificar (checklist por tela)
+
+### Fluxos sem sessão
+1. **`/login`** (`app/login/page.tsx`) — card centralizado não pode encostar/estourar
+   nas bordas no mobile; inputs e botão full-width; sem overflow.
+2. **`/change-password`** (`app/change-password/page.tsx`) — header mínimo sem
+   navegação; formulário legível no mobile.
+
+### App autenticado
+3. **`/` (home)** (`app/page.tsx` + `components/app-shell/app-header.tsx`) —
+   header (marca, título, ⌘K, tema, logout) não pode quebrar/empilhar feio no mobile;
+   CTAs (`open-docs-button.tsx`) acessíveis; hero/textos sem overflow.
+4. **`/docs` e `/docs/[slug]`** (`components/api-hub/*`) — a tela mais densa:
+   - Sidebar (`Sidebar`) deve virar **drawer** no mobile (o `Header` do docs tem
+     toggle mobile) e não empurrar conteúdo; verificar overlay e scroll.
+   - `EndpointView`: `ParamTable`/`SchemaView`/`CodePanel`/`CodeBlock` — blocos de
+     código e tabelas precisam de `overflow-x-auto` no container, nunca estourar a
+     página. URLs/exemplos longos não podem alargar o body.
+   - `TryIt`: inputs de método/URL/headers/body utilizáveis no mobile; resposta com
+     scroll próprio.
+   - `Overview`: tabela de endpoints/descrição sem overflow.
+5. **Command palette** (`components/command-palette/command-palette.tsx`) — abrir com
+   ⌘K em cada viewport: largura máxima adequada, lista com scroll, itens longos
+   (URLs de spec) truncados, não maior que a viewport no mobile.
+6. **AI chat dialog** (`components/api-hub/ai-chat-dialog.tsx`) — abrir via ⌘K/Ctrl+I
+   num spec: bolhas de mensagem (alinhamento user/assistant), input fixo, dialog
+   ocupando quase full-screen no mobile sem estourar; textos longos com wrap.
+
+### Admin (header via `app/admin/layout.tsx`)
+7. **`/admin/users`** e **`/admin/groups`** (`components/admin/directory-console.tsx`)
+   — layout estilo AD com **árvore à esquerda + lista à direita**: no mobile precisa
+   colapsar para uma coluna (árvore vira drawer/topo ou seletor) — este é o candidato
+   nº 1 a quebrar. Lista/tabela de objetos com scroll; kebab menu acessível.
+   - **Dialog "Propriedades"** (com abas Geral/Conta/Membro de / Membros/Permissões/
+     Specs): abas não podem estourar horizontalmente; matriz de permissões e
+     multi-select de specs precisam rolar dentro do dialog; dialog não maior que a tela.
+8. **`/admin/dashboard`** (`components/admin/usage-dashboard.tsx`) — cards de métrica
+   empilham no mobile; **gráficos/charts** com container responsivo (`width: 100%`),
+   sem overflow; tabelas por provider/modelo/usuário com scroll. (Ao mexer em chart,
+   seguir a skill `dataviz`.)
+
+### Config IA (header via `app/config-ia/layout.tsx`)
+9. **`/config-ia`** (`components/config-ia/*`) — lista de providers clicável;
+   textarea "Regras e limitações da IA" (`ai-rules-form.tsx`) full-width;
+   **Sheet lateral** de relatório do provider (`provider-usage-sheet.tsx`) deve virar
+   quase full-width no mobile, com charts/tabelas internos rolando, sem estourar.
+
+## Padrões de correção esperados (Tailwind, mobile-first)
+
+- **Overflow de código/URL**: `min-w-0` no filho flex + `break-words`/`break-all` ou
+  `overflow-x-auto` no wrapper; nunca `whitespace-nowrap` sem container rolável.
+- **Tabelas densas**: envolver em `<div class="overflow-x-auto">`; considerar layout
+  em cards no mobile onde fizer sentido.
+- **Grids**: `grid-cols-1 md:grid-cols-2 lg:grid-cols-3` em vez de colunas fixas.
+- **Layout duas colunas (directory console)**: `flex-col md:flex-row`; a coluna
+  árvore vira `Sheet`/drawer no mobile (reusar `components/ui/sheet.tsx`).
+- **Dialog/Sheet**: `max-w-[95vw]`/`w-full` + `max-h-[90vh]` + `overflow-y-auto` no
+  corpo; conteúdo interno com seu próprio scroll.
+- **Header global** (`app-header.tsx`): esconder/encolher rótulos com `hidden sm:inline`,
+  manter ⌘K/tema/logout sempre acessíveis (ícones no mobile).
+- **min-w-0 em containers flex** para permitir que filhos encolham (causa comum de
+  overflow em flex).
+
+Não perseguir os ~8 warnings conhecidos de `react-hooks/set-state-in-effect` (padrão
+do repo).
+
+## Fluxo de execução (loop por tela)
+
+Para cada tela do checklist:
+1. `browser_navigate` até a rota.
+2. Para cada viewport: `browser_resize` → rodar o snippet de overflow (`browser_evaluate`)
+   → `browser_snapshot` → `browser_take_screenshot` (guardar no scratchpad como evidência).
+3. Registrar defeitos (viewport, elemento infrator, sintoma).
+4. Abrir overlays relevantes (palette, chat, dialog de propriedades, sheet) e repetir 2–3.
+5. Corrigir no componente (Tailwind, mobile-first), salvar.
+6. Re-testar a mesma tela nos viewports afetados até `overflowX === false` e layout ok
+   visualmente.
+
+Trabalhar por tela (navegar → medir → corrigir → re-medir) em vez de medir tudo antes,
+para o dev server já refletir o ajuste no próximo passo.
+
+## Registro de achados
+
+Manter uma tabela de achados no fim deste arquivo (ou em nota separada), com:
+`Tela | Viewport | Elemento | Sintoma | Correção | Status`. Marcar cada item como
+✅ corrigido / ⏳ pendente / ➖ ok (sem ajuste).
+
+## Verificação final
+
+- Passar por todas as telas × viewports uma última vez com `overflowX === false`.
+- `npm run lint` e `npx tsc --noEmit` (o build ignora erros de TS; checar à parte).
+- `npm test` (garantir que nenhum ajuste quebrou snapshot/lógica).
+- Conferir modo claro **e** escuro (`.dark` no `<html>`) em ao menos mobile e desktop,
+  pois algumas correções mexem em bordas/sombras visíveis só num dos temas.
+- Screenshots antes/depois das telas que mudaram como evidência.
+
+## Ordem sugerida
+
+1. Setup (dev server + login + spec registrada).
+2. Telas simples primeiro: `/login`, `/change-password`, `/` (home).
+3. Admin: `directory-console` (users/groups) + dialog de propriedades — maior risco.
+4. `/admin/dashboard` (charts) e `/config-ia` (+ sheet do provider).
+5. `/docs`/`/docs/[slug]` + overlays (palette, chat, TryIt) — mais densa.
+6. Verificação final (viewports, lint/tsc/test, temas).
 
 ---
 
-## 1. Migration 0004 (schema + dados)
+## Registro de achados (execução 2026-07-04)
 
-`lib/db/schema.ts` + `npx drizzle-kit generate`, com SQL de seed/backfill editado no
-arquivo gerado (mesmo padrão da `0003`):
+Testado nos viewports 360/390/768/1024/1440 (claro + escuro). Critério: `scrollWidth == clientWidth`.
 
-- **`users`** — novas colunas:
-  - `name text` — backfill com o valor de `username`, depois `NOT NULL`;
-  - `email text` — nullable no banco (linhas antigas não têm), mas obrigatório e
-    único na API; unique index (Postgres permite múltiplos `NULL`);
-  - `phone text`, `company text`, `jobTitle text` (`job_title`) — nullable.
-- **`groups`** — nova coluna `allSpecs boolean NOT NULL DEFAULT true`. Semântica
-  sem efeito colateral entre grupos: `allSpecs=true` ⇒ o grupo vê todas as specs;
-  `false` ⇒ só as listadas em `group_specs`. Acesso efetivo do usuário = união dos
-  grupos (qualquer grupo com `allSpecs` ⇒ todas).
-- **`group_specs`** — `{ groupId FK groups cascade, specSlug FK specs.slug cascade }`,
-  PK composta — ACL por spec.
-- **Permissões (dados)** — inserir `specs.load` (carregar/registrar spec),
-  `specs.delete` (remover spec) e `proxy.use` (testar endpoint). Migrar grants:
-  grupos com `specs.manage` ganham `specs.load` + `specs.delete`; grupos com
-  `docs.view` ganham `proxy.use` (preserva o comportamento atual do try-it);
-  apagar `specs.manage`. Atualizar `PROTECTED_KEYS` em
-  `app/api/admin/permissions/route.ts` para o novo conjunto de 9 chaves.
+| Tela | Viewport | Elemento | Sintoma | Correção | Status |
+|------|----------|----------|---------|----------|--------|
+| `/` home | todos | — | — | — | ➖ ok |
+| `/login` | todos | — | — | — | ➖ ok |
+| `/change-password` | todos | — | — | — | ➖ ok |
+| `/admin/users` e `/admin/groups` | 360/390 | grupo de controles do header (busca `w-56` + dropdown + botão, `flex` rígido) | overflow horizontal de página (~466px) | `flex w-full flex-wrap ... sm:w-auto`; busca `flex-1 min-w-0` + `w-full sm:w-56` (`directory-console.tsx`) | ✅ corrigido |
+| Dialogs de propriedades (user/grupo) | 360/390 | — | já cabiam (margens + scroll interno + 4 abas ok) | — | ➖ ok |
+| `/admin/dashboard` | todos | — | cards/barras já empilham | — | ➖ ok |
+| `/config-ia` | 360/390 | header: botões "Adicionar provider"+"Salvar" (`flex` sem wrap, `shrink-0`) | overflow horizontal (~438px) | `flex-wrap` no header e no grupo de botões (`config-ia-manager.tsx`) | ✅ corrigido |
+| `/config-ia` sheet do provider | 360/390 | `SheetContent` | base `data-[side=right]:w-3/4` vencia o `w-full` (specificity) → sheet 3/4 no mobile e capado em `max-w-sm` no desktop | `!w-full sm:!max-w-xl` (`provider-usage-sheet.tsx`) → full-width no mobile, `xl` no desktop | ✅ corrigido |
+| `/docs/[slug]` (overview + endpoint) | todos | code blocks (`<pre>`) | rolam dentro do próprio container (correto), sem overflow de página | — | ➖ ok |
+| Command palette / chat IA / TryIt / sidebar drawer | todos | — | contidos, sem overflow | — | ➖ ok |
 
-## 2. RBAC macro/micro (`lib/rbac.ts` + tela de grupos)
+**Ajuste extra pedido pelo usuário:** botão "Enviar mensagem" do chat movido de baixo do textarea para a **direita** dele (`InputGroupAddon align="block-end"` → `"inline-end"` em `ai-chat-dialog.tsx`).
 
-- `ROUTE_PERMISSIONS`: `POST /api/specs` e `/api/spec` → `specs.load`;
-  `DELETE /api/specs/[slug]` → `specs.delete`; `/api/proxy` → `proxy.use`
-  (demais entradas inalteradas).
-- **`/admin/groups`** (`components/admin/groups-manager.tsx`): matriz reorganizada
-  em seções — **"Telas (rotas)"** (`docs.view`, `admin.users`, `admin.groups`,
-  `admin.ai`, `admin.dashboard`), **"Ações"** (`specs.load`, `specs.delete`,
-  `proxy.use`, `chat.use`) e **"Personalizadas"** (criadas via UI). A
-  categorização é derivada da chave no client (mapa fixo das 9 seedadas) — sem
-  coluna nova no banco.
-- **Acesso a specs por grupo** (mesma tela): toggle "Todas as specs" (`allSpecs`)
-  e, quando desligado, multi-select das specs registradas. Nova rota
-  `PUT /api/admin/groups/:id/specs` (substitui o conjunto inteiro, mesmo padrão de
-  `.../permissions`), audita `group.specs_updated`.
-- **Enforcement por spec** — novo `lib/spec-access.ts` com
-  `getAllowedSpecSlugs(userId)` / `canAccessSpec(userId, slug)` (query
-  `user_groups → groups.allSpecs / group_specs`). Aplicado em:
-  - `GET /api/specs` — filtra a lista (o palette passa a mostrar só o permitido);
-  - `app/docs/[slug]/page.tsx` — 404 se não permitido;
-  - rotas de chat (`/api/ai/conversations*`) — a conversa referencia
-    `specSourceUrl`; resolver o slug e checar acesso.
-  - Deliberadamente fora do middleware (exigiria query por slug a cada request);
-    a checagem fica nas rotas/páginas, que já leem identidade via
-    `lib/request-identity.ts`.
-- Gating na UI: "Carregar nova URL" ⇒ `specs.load`; lixeira de spec ⇒
-  `specs.delete`; `TryIt` escondido sem `proxy.use` (via `useSession()`).
+**Interações validadas no chat:** abrir (Ctrl+I), digitar + Enter e envio pelo botão → resposta transmitida do provider (Groq), "Nova conversa" reseta, bolhas user/assistant renderizam com wrap e sem overflow no mobile.
 
-## 3. Cadastro de usuário com perfil completo
+**Verificação:** `eslint` 0 erros (4 warnings `set-state-in-effect` pré-existentes do repo); `tsc --noEmit` 0 erros de código-fonte (só arquivos gerados em `.next/`); `vitest` 137/137 testes passando. Conferido claro + escuro.
 
-- `POST /api/admin/users`: aceita/valida `name` (obrigatório), `email`
-  (obrigatório, formato + unicidade → 409), `phone`/`company`/`jobTitle` opcionais.
-- `PATCH /api/admin/users/:id`: passa a aceitar os campos de perfil; nova ação de
-  auditoria `user.updated`.
-- `components/admin/users-manager.tsx`: dialogs de criação/edição com os 6 campos;
-  a tabela mostra name + email (demais campos no dialog de edição).
-- `GET /api/me` e `lib/ai/context.ts#buildUserContext` passam a incluir `name`
-  (e cargo/empresa no contexto da IA quando preenchidos — enriquece o contexto
-  sem reintroduzir campo de texto livre).
-
-## 4. Header global em todas as telas
-
-- Novo `components/app-shell/app-header.tsx` (client): marca API Hub (link `/`),
-  título da tela, botão de busca/⌘K que abre o palette global e logout — mesmo
-  visual do header atual do docs.
-- `app/admin/layout.tsx` (novo) renderiza o header para todo `/admin/*`;
-  `/config-ia` usa o mesmo header; a home troca o header inline por ele. `/docs`
-  mantém o `Header` do ApiHub (ganha só o hook do palette global). `/login` e
-  `/change-password` ficam sem palette (fluxos bloqueados); o change-password
-  ganha header mínimo sem navegação.
-
-## 5. Command palette global
-
-- Novo `components/command-palette/command-palette-provider.tsx` montado em
-  `app/layout.tsx` (dentro do `SessionProvider`): estado aberto/fechado, listener
-  global de Cmd+K (inativo em `/login` e `/change-password`) e hook
-  `useCommandPalette()`.
-- `SpecSwitcher` migra para dentro do provider (vira `command-palette.tsx`),
-  levando junto a lógica `loadSpec` de `api-hub.tsx` (fetch `/api/spec` →
-  `POST /api/specs` → `router.push`). O `ApiHub` registra contexto no provider
-  (sourceUrl, abrir chat IA) para o grupo "Assistente" continuar aparecendo só no
-  docs; Ctrl+I continua como está.
-- Grupo "Specs registradas" só aparece com `docs.view` e ganha um item fixo
-  **"Documentação do API Hub"** (a spec padrão bundled) que navega para `/docs` —
-  o `/docs` passa a se comportar como uma spec dentro do command.
-- Visibilidade dos itens segue derivada de `useSession().me.permissions`
-  (a garantia real continua sendo o middleware).
-
-## 6. Home abre o palette
-
-Os dois CTAs ("Ir para a documentação" e "Acessar documentação") viram um client
-component que chama `useCommandPalette().open()` — sem navegação para
-`/docs?switcher=1`. O suporte a `?switcher=1` em `app/docs/page.tsx` é removido.
-
-## 7. Relatório de uso por provider em `/config-ia`
-
-- Clicar na linha do provider abre um **Sheet lateral** (adicionar
-  `components/ui/sheet.tsx` via shadcn CLI se ainda não existir).
-- Nova rota `GET /api/config-ia/providers/:id/usage?range=24h|7d|30d` (o prefixo
-  `/api/config-ia` já é gated por `admin.ai`): a partir de `ai_messages` filtrado
-  pelo `providerLabel` do provider — totais (tokens prompt/completion, mensagens,
-  latência média, nº de fallbacks), série por dia, quebra por modelo e por usuário
-  (join `ai_conversations`/`users`; `null` ⇒ "Usuário removido"), mais saúde do
-  provider (`failureCount`, `lastFailureAt`, `cooldownUntil`).
-- Limitação documentada: o vínculo histórico é por `providerLabel` (texto) —
-  renomear o provider desassocia o histórico antigo.
-- Gráficos do sheet seguem a skill `dataviz`.
-
-## 8. Auditoria
-
-Novas ações na união de `lib/audit.ts`: `user.updated`, `group.specs_updated`.
-Mesmo padrão strict (auditoria na mesma transação da mutação; falha no insert
-reverte a mutação).
-
-## 9. Testes
-
-- Unit: `lib/rbac.test.ts` (novas chaves/rotas: `specs.load`/`specs.delete`,
-  `proxy.use`), novo `lib/spec-access.test.ts` (allSpecs, união entre grupos,
-  grupo restrito).
-- Integração (`tests/integration/`): criação de usuário com email duplicado → 409
-  e campos de perfil persistidos; `PUT .../groups/:id/specs` + filtro de
-  `GET /api/specs` para grupo restrito; 404 de `/docs/[slug]` sem acesso; usage
-  por provider agregando por dia/modelo/usuário.
-- Atualizar asserts existentes que referenciam `specs.manage`.
-
-## 10. Documentação
-
-Atualizar `CLAUDE.md` e `README.md`: catálogo passa a 9 permissões seedadas, ACL
-por spec, novos campos de usuário, palette global e header global.
-
-## Ordem de implementação
-
-1. Migration 0004 + schema + `PROTECTED_KEYS` + `lib/rbac.ts` + `lib/spec-access.ts`.
-2. Rotas: users (POST/PATCH com perfil), groups (`PUT :id/specs`), specs/proxy
-   (permissões novas), usage por provider, enforcement por spec em
-   specs/docs/chat.
-3. UI: header global + layout admin, palette global (provider + migração do
-   SpecSwitcher + CTAs da home), users-manager (campos de perfil), groups-manager
-   (seções macro/micro + acesso a specs), sheet de relatório do provider.
-4. Auditoria, testes, docs.
-
-## Verificação
-
-- `npm run lint`, `npx tsc --noEmit`, `npm test`.
-- `bash scripts/_run-integration.sh` (Postgres descartável `apihub_test` — nunca
-  apontar `DATABASE_URL` de integração pro banco real).
-- Manual: Cmd+K em `/`, `/admin/users`, `/config-ia`; CTA da home abrindo o
-  palette; item "Documentação do API Hub" navegando para `/docs`; usuário de
-  grupo restrito não vê spec fora da lista (palette, `/docs/[slug]` → 404, chat);
-  usuário sem `proxy.use` sem o TryIt e `/api/proxy` → 403; criação de usuário
-  exigindo name/email (email duplicado → erro); clique no provider abrindo o
-  sheet com o relatório completo.
+Evidências (screenshots antes/depois) em `resp/`.
