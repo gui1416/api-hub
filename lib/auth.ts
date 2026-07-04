@@ -3,6 +3,19 @@ import { SignJWT, jwtVerify } from 'jose'
 export const SESSION_COOKIE = 'apihub_session'
 const SESSION_DURATION = '1d'
 const SESSION_DURATION_SECONDS = 1 * 24 * 60 * 60
+export const SESSION_DURATION_MS = SESSION_DURATION_SECONDS * 1000
+
+export interface SessionPayload {
+  /** users.id */
+  sub: string
+  username: string
+  /**
+   * Snapshot do momento do login/última troca de senha. Quando true, o
+   * middleware força o fluxo de /change-password antes de qualquer outra
+   * rota; a troca de senha reemite o cookie com a flag zerada.
+   */
+  mustChangePassword: boolean
+}
 
 function getSecretKey() {
   const secret = process.env.JWT_SECRET
@@ -12,8 +25,12 @@ function getSecretKey() {
   return new TextEncoder().encode(secret)
 }
 
-export async function createSessionToken(username: string): Promise<string> {
-  return new SignJWT({ sub: username })
+export async function createSessionToken(payload: SessionPayload): Promise<string> {
+  return new SignJWT({
+    sub: payload.sub,
+    username: payload.username,
+    mustChangePassword: payload.mustChangePassword,
+  })
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
     .setExpirationTime(SESSION_DURATION)
@@ -22,10 +39,17 @@ export async function createSessionToken(username: string): Promise<string> {
 
 export async function verifySessionToken(
   token: string,
-): Promise<{ sub: string } | null> {
+): Promise<SessionPayload | null> {
   try {
     const { payload } = await jwtVerify(token, getSecretKey())
-    return typeof payload.sub === 'string' ? { sub: payload.sub } : null
+    if (typeof payload.sub !== 'string' || typeof payload.username !== 'string') {
+      return null
+    }
+    return {
+      sub: payload.sub,
+      username: payload.username,
+      mustChangePassword: payload.mustChangePassword === true,
+    }
   } catch {
     return null
   }
@@ -38,7 +62,7 @@ export async function verifySessionToken(
  */
 export async function getSessionFromRequest(
   request: Request,
-): Promise<{ sub: string } | null> {
+): Promise<SessionPayload | null> {
   const cookieHeader = request.headers.get('cookie')
   if (!cookieHeader) return null
   const match = cookieHeader
@@ -48,6 +72,21 @@ export async function getSessionFromRequest(
   if (!match) return null
   const token = decodeURIComponent(match.slice(SESSION_COOKIE.length + 1))
   return verifySessionToken(token)
+}
+
+/**
+ * "Online" derivado só de lastLoginAt/lastLogoutAt — sem tabela de sessão
+ * nem heartbeat. A janela de SESSION_DURATION_MS cobre quem fechou o
+ * navegador sem clicar em "sair": passado o prazo de validade do JWT, deixa
+ * de contar como online mesmo sem logout explícito.
+ */
+export function isOnline(
+  user: { lastLoginAt: Date | null; lastLogoutAt: Date | null },
+  now: Date = new Date(),
+): boolean {
+  if (!user.lastLoginAt) return false
+  if (user.lastLogoutAt && user.lastLogoutAt >= user.lastLoginAt) return false
+  return now.getTime() - user.lastLoginAt.getTime() < SESSION_DURATION_MS
 }
 
 export const sessionCookieOptions = {

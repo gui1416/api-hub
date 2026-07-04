@@ -1,18 +1,16 @@
 'use client'
 
-import { Boxes, LoaderCircle, Menu, Search } from 'lucide-react'
+import { Boxes, Menu, Search } from 'lucide-react'
 import { LogoutButton } from './logout-button'
 import { ThemeToggle } from './theme-toggle'
 
 export function Header({
   title,
-  loading,
   onOpenSwitcher,
   onToggleSidebar,
   onHome,
 }: {
   title: string
-  loading: boolean
   onOpenSwitcher: () => void
   onToggleSidebar: () => void
   onHome: () => void
@@ -55,11 +53,7 @@ export function Header({
           onClick={onOpenSwitcher}
           className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
         >
-          {loading ? (
-            <LoaderCircle className="size-3.5 animate-spin" />
-          ) : (
-            <Search className="size-3.5" />
-          )}
+          <Search className="size-3.5" />
           <span className="hidden sm:inline">Specs</span>
           <kbd className="hidden items-center gap-0.5 rounded border border-border/70 bg-muted px-1 font-mono text-[10px] text-muted-foreground sm:inline-flex">
             ⌘K

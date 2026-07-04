@@ -1,310 +1,205 @@
-# Plano: chat com IA sobre a documentação aberta
+# Plano v2: header global, palette global, perfil de usuário, RBAC macro/micro + ACL por spec, relatório por provider
 
-## Objetivo
+## Status do plano v1 (multi-usuário, grupos/permissões, dashboard) — concluído
 
-Botão dentro do command palette (Cmd+K) que abre um dialog de chat com
-IA. Por padrão o contexto é a spec atualmente aberta (resumo estruturado,
-não o JSON inteiro); digitando `@` na conversa dá pra mencionar outra
-spec já registrada no banco e somar ela ao contexto. Provedores de IA
-(Groq e, no futuro, qualquer endpoint compatível com OpenAI) configuráveis
-numa rota `/config-ia`, com fallback ordenado e circuit breaker se um
-provider começar a falhar.
+A revisão do código confirmou que tudo do plano anterior foi implementado:
 
-O schema **não fica preso ao Groq** — é modelado como uma lista genérica
-de "AI providers" desde o início (ver seção 4).
+- Usuários em Postgres com bcrypt, seed do primeiro admin (`scripts/seed-admin.mjs`),
+  troca forçada de senha (`/change-password`), reset com senha temporária exibida uma vez.
+- RBAC usuário → grupo(s) → permissão(ões) com catálogo editável (`lib/rbac.ts`),
+  migration `0003` seedando 7 permissões e os grupos `Administradores`/`Usuários`
+  (`isSystem`).
+- `middleware.ts` em runtime nodejs: checagem fresca de status + permissões a cada
+  request, headers `x-user-*` sobrescritos (não spoofáveis), logout forçado
+  (usuário desativado/removido cai na request seguinte + poll de 45s em
+  `components/session-provider.tsx`).
+- Telas `/admin/users`, `/admin/groups`, `/admin/dashboard` e regras de IA em
+  `/config-ia` (`ai_settings.systemPromptRules`), contexto por usuário derivado
+  (`lib/ai/context.ts#buildUserContext`), conversas de IA isoladas por usuário.
+- Auditoria strict em transação para todas as mutações administrativas.
+- Testes unitários (`lib/rbac.test.ts`, `lib/auth.test.ts`) e de integração
+  (`tests/integration/`, runner seguro `scripts/_run-integration.sh`).
 
-## 1. Onde o botão entra
+## Lacunas encontradas na revisão (que este plano v2 fecha)
 
-`components/api-hub/spec-switcher.tsx` já é o `CommandDialog` (Cmd+K) —
-"dentro do command" = um novo grupo ali:
+1. **Header não está em todas as telas** — só `/docs` e a home têm header;
+   `/admin/*`, `/config-ia` e `/change-password` renderizam conteúdo sem
+   header/navegação de volta.
+2. **Command palette não é global** — `SpecSwitcher` só é montado dentro de
+   `components/api-hub/api-hub.tsx`; Cmd+K não funciona em `/`, `/admin/*`,
+   `/config-ia`.
+3. **Cadastro de usuário só tem username + grupos** — faltam name, email,
+   telefone, empresa, cargo.
+4. **Permissões com granularidade grossa** — `specs.manage` cobre carregar E
+   deletar juntos; `/api/proxy` exige só autenticação; a matriz em `/admin/groups`
+   é plana (sem separação telas/ações); não há controle por spec individual.
+5. **Provider em `/config-ia` não é clicável** — só latência média/nº de chamadas
+   agregados.
+6. **Home navega para `/docs?switcher=1`** em vez de abrir o palette na hora, e o
+   `/docs` (spec padrão bundled) não aparece como spec dentro do command.
 
-```
-CommandGroup heading="Assistente"
-  CommandItem "Conversar sobre esta API" (ícone Sparkles/MessageCircle)
-```
+## Decisões já tomadas com o usuário
 
-Selecionar fecha o switcher e abre um `AiChatDialog`
-(`components/api-hub/ai-chat-dialog.tsx`). Estado `aiChatOpen` fica em
-`api-hub.tsx`, ao lado de `switcherOpen`.
+- RBAC controla telas + ações **e também acesso por spec individual** (ACL
+  grupo × spec).
+- Relatório do provider abre em **painel/sheet lateral** dentro de `/config-ia`.
+- Campos obrigatórios do usuário: **username, name e email** (email único);
+  telefone, empresa e cargo opcionais.
 
-## 2. Componentes de UI (já existem em `components/ui/`)
+---
 
-- `dialog.tsx` → casco do modal.
-- `message.tsx` → balões (`align="end"|"start"` pra usuário/assistente).
-- `message-scroller.tsx` → auto-scroll do histórico
-  (`@shadcn/react/message-scroller`, já é dependência).
-- `spinner.tsx` → "gerando resposta".
-- `marker.tsx` → avisos inline ("trocando pra provider de fallback...",
-  separador de conversas).
-- `input-group.tsx` → caixa de texto + botão de enviar.
-- `command.tsx` → popover de `@menção` — fuzzy match já vem de graça do
-  `cmdk` por baixo, não preciso escrever nada extra pra `@rhid`, `@folha`
-  funcionarem por similaridade.
+## 1. Migration 0004 (schema + dados)
 
-## 3. Modelo de dados (nova migration)
+`lib/db/schema.ts` + `npx drizzle-kit generate`, com SQL de seed/backfill editado no
+arquivo gerado (mesmo padrão da `0003`):
 
-### `ai_providers` — genérico, não preso a "Groq"
+- **`users`** — novas colunas:
+  - `name text` — backfill com o valor de `username`, depois `NOT NULL`;
+  - `email text` — nullable no banco (linhas antigas não têm), mas obrigatório e
+    único na API; unique index (Postgres permite múltiplos `NULL`);
+  - `phone text`, `company text`, `jobTitle text` (`job_title`) — nullable.
+- **`groups`** — nova coluna `allSpecs boolean NOT NULL DEFAULT true`. Semântica
+  sem efeito colateral entre grupos: `allSpecs=true` ⇒ o grupo vê todas as specs;
+  `false` ⇒ só as listadas em `group_specs`. Acesso efetivo do usuário = união dos
+  grupos (qualquer grupo com `allSpecs` ⇒ todas).
+- **`group_specs`** — `{ groupId FK groups cascade, specSlug FK specs.slug cascade }`,
+  PK composta — ACL por spec.
+- **Permissões (dados)** — inserir `specs.load` (carregar/registrar spec),
+  `specs.delete` (remover spec) e `proxy.use` (testar endpoint). Migrar grants:
+  grupos com `specs.manage` ganham `specs.load` + `specs.delete`; grupos com
+  `docs.view` ganham `proxy.use` (preserva o comportamento atual do try-it);
+  apagar `specs.manage`. Atualizar `PROTECTED_KEYS` em
+  `app/api/admin/permissions/route.ts` para o novo conjunto de 9 chaves.
 
-```ts
-export const aiProviderTypeEnum = pgEnum('ai_provider_type', ['openai-compatible'])
-// enum aberto: 'anthropic'/'gemini' entram depois como valores novos +
-// adapter novo, sem quebrar as linhas existentes.
+## 2. RBAC macro/micro (`lib/rbac.ts` + tela de grupos)
 
-export const aiProviders = pgTable('ai_providers', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  label: text('label').notNull(),
-  providerType: aiProviderTypeEnum('provider_type').notNull().default('openai-compatible'),
-  baseUrl: text('base_url').notNull(), // ex: https://api.groq.com/openai/v1
-  apiKeyEncrypted: text('api_key_encrypted').notNull(),
-  apiKeyLast4: text('api_key_last4').notNull(), // só pra exibir mascarado, sem decriptar
-  model: text('model').notNull(),
-  priority: integer('priority').notNull(),
-  enabled: boolean('enabled').notNull().default(true),
-  // circuit breaker — estado operacional, não estatística de exibição
-  failureCount: integer('failure_count').notNull().default(0),
-  lastFailureAt: timestamp('last_failure_at', { withTimezone: true }),
-  cooldownUntil: timestamp('cooldown_until', { withTimezone: true }),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-})
-```
+- `ROUTE_PERMISSIONS`: `POST /api/specs` e `/api/spec` → `specs.load`;
+  `DELETE /api/specs/[slug]` → `specs.delete`; `/api/proxy` → `proxy.use`
+  (demais entradas inalteradas).
+- **`/admin/groups`** (`components/admin/groups-manager.tsx`): matriz reorganizada
+  em seções — **"Telas (rotas)"** (`docs.view`, `admin.users`, `admin.groups`,
+  `admin.ai`, `admin.dashboard`), **"Ações"** (`specs.load`, `specs.delete`,
+  `proxy.use`, `chat.use`) e **"Personalizadas"** (criadas via UI). A
+  categorização é derivada da chave no client (mapa fixo das 9 seedadas) — sem
+  coluna nova no banco.
+- **Acesso a specs por grupo** (mesma tela): toggle "Todas as specs" (`allSpecs`)
+  e, quando desligado, multi-select das specs registradas. Nova rota
+  `PUT /api/admin/groups/:id/specs` (substitui o conjunto inteiro, mesmo padrão de
+  `.../permissions`), audita `group.specs_updated`.
+- **Enforcement por spec** — novo `lib/spec-access.ts` com
+  `getAllowedSpecSlugs(userId)` / `canAccessSpec(userId, slug)` (query
+  `user_groups → groups.allSpecs / group_specs`). Aplicado em:
+  - `GET /api/specs` — filtra a lista (o palette passa a mostrar só o permitido);
+  - `app/docs/[slug]/page.tsx` — 404 se não permitido;
+  - rotas de chat (`/api/ai/conversations*`) — a conversa referencia
+    `specSourceUrl`; resolver o slug e checar acesso.
+  - Deliberadamente fora do middleware (exigiria query por slug a cada request);
+    a checagem fica nas rotas/páginas, que já leem identidade via
+    `lib/request-identity.ts`.
+- Gating na UI: "Carregar nova URL" ⇒ `specs.load`; lixeira de spec ⇒
+  `specs.delete`; `TryIt` escondido sem `proxy.use` (via `useSession()`).
 
-`providerType: 'openai-compatible'` é o único adapter implementado no v1
-— cobre Groq, OpenAI, OpenRouter, Ollama, vLLM, LM Studio e Perplexity
-(todos falam o formato de chat completions da OpenAI), só trocando
-`baseUrl`/`model`/chave. Claude (Anthropic) e Gemini nativos ficam
-documentados como possíveis valores futuros do enum, **não implementados
-agora** — exigiriam SDKs e adapters próprios, e não foi isso que foi
-pedido.
+## 3. Cadastro de usuário com perfil completo
 
-### `ai_conversations` — uma conversa por spec (sugestão aceita)
+- `POST /api/admin/users`: aceita/valida `name` (obrigatório), `email`
+  (obrigatório, formato + unicidade → 409), `phone`/`company`/`jobTitle` opcionais.
+- `PATCH /api/admin/users/:id`: passa a aceitar os campos de perfil; nova ação de
+  auditoria `user.updated`.
+- `components/admin/users-manager.tsx`: dialogs de criação/edição com os 6 campos;
+  a tabela mostra name + email (demais campos no dialog de edição).
+- `GET /api/me` e `lib/ai/context.ts#buildUserContext` passam a incluir `name`
+  (e cargo/empresa no contexto da IA quando preenchidos — enriquece o contexto
+  sem reintroduzir campo de texto livre).
 
-```ts
-export const aiConversations = pgTable('ai_conversations', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  specSourceUrl: text('spec_source_url').notNull(),
-  title: text('title'), // preenchido depois da 1ª mensagem (seção 8)
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-}, (table) => [index('ai_conversations_spec_idx').on(table.specSourceUrl, table.updatedAt)])
-```
+## 4. Header global em todas as telas
 
-### `ai_messages`
+- Novo `components/app-shell/app-header.tsx` (client): marca API Hub (link `/`),
+  título da tela, botão de busca/⌘K que abre o palette global e logout — mesmo
+  visual do header atual do docs.
+- `app/admin/layout.tsx` (novo) renderiza o header para todo `/admin/*`;
+  `/config-ia` usa o mesmo header; a home troca o header inline por ele. `/docs`
+  mantém o `Header` do ApiHub (ganha só o hook do palette global). `/login` e
+  `/change-password` ficam sem palette (fluxos bloqueados); o change-password
+  ganha header mínimo sem navegação.
 
-```ts
-export const aiMessages = pgTable('ai_messages', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  conversationId: uuid('conversation_id').notNull().references(() => aiConversations.id, { onDelete: 'cascade' }),
-  role: text('role').notNull(), // 'user' | 'assistant'
-  content: text('content').notNull(),
-  mentionedSpecIds: jsonb('mentioned_spec_ids'), // string[] de slugs — ver nota abaixo
-  // observabilidade (fica junto por enquanto — ver seção "over-engineering evitado")
-  providerLabel: text('provider_label'),
-  providerType: text('provider_type'),
-  model: text('model'),
-  promptTokens: integer('prompt_tokens'),
-  completionTokens: integer('completion_tokens'),
-  latencyMs: integer('latency_ms'),
-  usedFallback: boolean('used_fallback').notNull().default(false),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-}, (table) => [index('ai_messages_conversation_idx').on(table.conversationId, table.createdAt)])
-```
+## 5. Command palette global
 
-`specs.slug` já é a chave primária imutável da tabela `specs` (não existe
-`id` separado, e o `CLAUDE.md` documenta que o slug nunca muda) — por
-isso `mentionedSpecIds` guarda slugs mesmo, só nomeado assim pra deixar a
-intenção clara.
+- Novo `components/command-palette/command-palette-provider.tsx` montado em
+  `app/layout.tsx` (dentro do `SessionProvider`): estado aberto/fechado, listener
+  global de Cmd+K (inativo em `/login` e `/change-password`) e hook
+  `useCommandPalette()`.
+- `SpecSwitcher` migra para dentro do provider (vira `command-palette.tsx`),
+  levando junto a lógica `loadSpec` de `api-hub.tsx` (fetch `/api/spec` →
+  `POST /api/specs` → `router.push`). O `ApiHub` registra contexto no provider
+  (sourceUrl, abrir chat IA) para o grupo "Assistente" continuar aparecendo só no
+  docs; Ctrl+I continua como está.
+- Grupo "Specs registradas" só aparece com `docs.view` e ganha um item fixo
+  **"Documentação do API Hub"** (a spec padrão bundled) que navega para `/docs` —
+  o `/docs` passa a se comportar como uma spec dentro do command.
+- Visibilidade dos itens segue derivada de `useSession().me.permissions`
+  (a garantia real continua sendo o middleware).
 
-Abrir o chat numa spec: pega (ou cria) a `ai_conversations` mais recente
-daquele `specSourceUrl`, carrega suas mensagens. Trocar de spec ou criar
-"nova conversa" explicitamente cria outra linha em `ai_conversations`.
+## 6. Home abre o palette
 
-## 4. Over-engineering que decidi NÃO fazer agora (e por quê)
+Os dois CTAs ("Ir para a documentação" e "Acessar documentação") viram um client
+component que chama `useCommandPalette().open()` — sem navegação para
+`/docs?switcher=1`. O suporte a `?switcher=1` em `app/docs/page.tsx` é removido.
 
-- **Interface de cache plugável (`SpecCacheProvider`/`RedisCacheProvider`)**
-  — é um `Map` em memória com TTL (seção 6). Trocar por Redis um dia,
-  se precisar, é reescrever uma função pequena — não ganho nada tendo a
-  interface pronta hoje pra uma escala que não temos.
-- **Salvar `requestSchema`/`responseSchema` de cada operação durante o
-  parsing "pra preparar RAG futuro"** — já dá pra puxar isso sob demanda
-  do `ParsedSpec` cacheado (seção 6) quando essa necessidade aparecer de
-  verdade, sem persistir nada a mais agora.
-- **Tabela `ai_message_metrics` separada de `ai_messages`** — separação
-  de responsabilidade é válida em tese, mas no volume esperado (app de
-  login único) é um JOIN a mais em toda consulta sem ganho prático hoje.
-  Reversível fácil depois se incomodar.
-- **`successCount`/`averageLatency` como colunas mantidas manualmente**
-  — contador desnormalizado quebra fácil (um caminho de erro que esquece
-  de incrementar). As mesmas estatísticas saem de uma query agregada em
-  cima de `ai_messages` na hora de renderizar `/config-ia`
-  (`AVG(latency_ms)`, `COUNT(*) FILTER (...)`), sem manter estado
-  duplicado.
-- **Custo estimado por provider** — depende de tabela de preço por
-  modelo que muda com frequência. Já guardamos os tokens; calcular custo
-  em cima disso é um `estimatedCost = tokens * pricePerToken` que dá pra
-  somar depois sem mudar schema agora.
-- **Adapters nativos de Claude/Gemini, seletor de modelo por conversa,
-  modo de busca web do Perplexity** — discutido na seção 3, escopo maior
-  que o pedido original, fica documentado como caminho aberto (enum
-  `providerType` não bloqueia), não implementado no v1.
+## 7. Relatório de uso por provider em `/config-ia`
 
-## 5. Contexto: resumo estruturado, não a spec inteira
+- Clicar na linha do provider abre um **Sheet lateral** (adicionar
+  `components/ui/sheet.tsx` via shadcn CLI se ainda não existir).
+- Nova rota `GET /api/config-ia/providers/:id/usage?range=24h|7d|30d` (o prefixo
+  `/api/config-ia` já é gated por `admin.ai`): a partir de `ai_messages` filtrado
+  pelo `providerLabel` do provider — totais (tokens prompt/completion, mensagens,
+  latência média, nº de fallbacks), série por dia, quebra por modelo e por usuário
+  (join `ai_conversations`/`users`; `null` ⇒ "Usuário removido"), mais saúde do
+  provider (`failureCount`, `lastFailureAt`, `cooldownUntil`).
+- Limitação documentada: o vínculo histórico é por `providerLabel` (texto) —
+  renomear o provider desassocia o histórico antigo.
+- Gráficos do sheet seguem a skill `dataviz`.
 
-A partir do `ParsedSpec` que o app já calcula
-(`lib/openapi/parser.ts#parseOpenAPI`):
+## 8. Auditoria
 
-```json
-{
-  "title": "RHiD API",
-  "version": "0.0.1",
-  "servers": ["https://www.rhid.com.br"],
-  "endpoints": [
-    { "method": "POST", "path": "/login", "summary": "Create a token", "tags": ["Login"] }
-  ]
-}
-```
+Novas ações na união de `lib/audit.ts`: `user.updated`, `group.specs_updated`.
+Mesmo padrão strict (auditoria na mesma transação da mutação; falha no insert
+reverte a mutação).
 
-Drill-down automático de schema por operação citada na pergunta fica
-como próxima iteração (não bloqueia v1).
+## 9. Testes
 
-## 6. Cache de specs (simples, sem interface)
+- Unit: `lib/rbac.test.ts` (novas chaves/rotas: `specs.load`/`specs.delete`,
+  `proxy.use`), novo `lib/spec-access.test.ts` (allSpecs, união entre grupos,
+  grupo restrito).
+- Integração (`tests/integration/`): criação de usuário com email duplicado → 409
+  e campos de perfil persistidos; `PUT .../groups/:id/specs` + filtro de
+  `GET /api/specs` para grupo restrito; 404 de `/docs/[slug]` sem acesso; usage
+  por provider agregando por dia/modelo/usuário.
+- Atualizar asserts existentes que referenciam `specs.manage`.
 
-`lib/ai/context.ts`: `Map<sourceUrl, { parsed, fetchedAt }>` em memória,
-TTL curto (ex: 5 min). Processo Node de vida longa, sem problema de
-cache por instância.
+## 10. Documentação
 
-**Invalidação manual (sugestões #3 + #11, unificadas):** uma função só,
-`invalidateSpecCache(sourceUrl)`, chamada por:
-- botão "Atualizar contexto" dentro do `AiChatDialog`;
-- botão "Reprocessar spec" na página `/docs/[slug]` (reaproveita a mesma
-  função — não são duas implementações).
+Atualizar `CLAUDE.md` e `README.md`: catálogo passa a 9 permissões seedadas, ACL
+por spec, novos campos de usuário, palette global e header global.
 
-## 7. Cliente de IA + fallback + circuit breaker (`lib/ai/`)
+## Ordem de implementação
 
-Vercel AI SDK (`ai` + `@ai-sdk/openai-compatible`) pro adapter
-`openai-compatible` — streaming/parsing de SSE prontos.
+1. Migration 0004 + schema + `PROTECTED_KEYS` + `lib/rbac.ts` + `lib/spec-access.ts`.
+2. Rotas: users (POST/PATCH com perfil), groups (`PUT :id/specs`), specs/proxy
+   (permissões novas), usage por provider, enforcement por spec em
+   specs/docs/chat.
+3. UI: header global + layout admin, palette global (provider + migração do
+   SpecSwitcher + CTAs da home), users-manager (campos de perfil), groups-manager
+   (seções macro/micro + acesso a specs), sheet de relatório do provider.
+4. Auditoria, testes, docs.
 
-```
-providers = ai_providers WHERE enabled AND (cooldown_until IS NULL OR cooldown_until < now())
-            ORDER BY priority ASC
+## Verificação
 
-para cada provider:
-  tenta streamText(...)
-  sucesso: zera failure_count, grava ai_messages (com métricas)
-  falha 401/403: cooldown_until = now() + 15min
-  falha 429: cooldown_until = now() + Retry-After (do header) ou 5min
-  qualquer falha: Marker no chat ("trocando pra <label>...") e tenta o próximo
-
-todos falharam: erro visível no chat, não derruba a rota.
-```
-
-## 8. Novas rotas de API
-
-- **`GET/PUT /api/config-ia`** — lista/edita `ai_providers`. `GET` só
-  devolve `apiKeyLast4`. Audita `ai.config_updated`.
-- **`GET /api/ai/conversations?sourceUrl=...`** — lista conversas
-  daquela spec (pra um seletor "conversas anteriores", se quiser expor).
-- **`POST /api/ai/conversations`** — cria conversa nova pra uma spec.
-- **`GET /api/ai/conversations/:id/messages`** — últimas mensagens.
-- **`POST /api/ai/conversations/:id/messages`** — manda mensagem, roda
-  fallback, grava resposta, stream de volta. Depois da 1ª troca
-  completa, gera o título (seção 9) se ainda não tiver.
-
-## 9. Título automático (sem custo extra de LLM)
-
-Trunca a primeira pergunta do usuário (ex: 40-50 caracteres, cortando em
-palavra inteira) como título — sem chamada extra ao modelo só pra isso.
-Se quiser um título "resumido de verdade" via IA depois, é uma
-melhoria isolada, não bloqueia agora.
-
-## 10. Indicador de contexto ativo + exportar Markdown
-
-- **Contexto ativo:** os "chips" da seção 12 mostram a spec principal
-  E as menções juntas (não só as menções) — ex:
-  `[RHiD (principal)] [+ Folha] [+ Assinatura]`, sempre visíveis acima
-  do input enquanto a conversa acontece.
-- **Exportar Markdown:** botão no header do `AiChatDialog`, monta um
-  `.md` a partir das mensagens já carregadas em memória (`# Conversa\n\n**Você:** ...\n\n**Assistente:** ...`)
-  e dispara um download client-side — sem rota nova, sem dependência
-  nova.
-
-## 11. Limite de uso por tokens
-
-`AI_RATE_LIMIT_TOKENS_PER_HOUR` / `AI_RATE_LIMIT_TOKENS_PER_DAY` (env
-vars opcionais, sem limite se não setadas). Antes de chamar o provider:
-`SELECT sum(prompt_tokens + completion_tokens) FROM ai_messages WHERE created_at > now() - interval '1 hour'`
-contra o teto. Estourou: mensagem clara no chat, não 500.
-
-## 12. `@menção` no chat
-
-Textarea controlado; `@` seguido de texto abre popover `Command`
-listando specs de `GET /api/specs` (fuzzy de graça). Selecionar remove o
-`@texto` digitado e vira um chip removível — chips (spec principal +
-menções) formam `mentionedSpecIds` no payload, desacoplado do texto da
-mensagem.
-
-## 13. Criptografia das chaves
-
-AES-256-GCM via `node:crypto` (sem dependência nova), chave em
-`AI_CONFIG_ENCRYPTION_KEY` (32 bytes base64, gerada uma vez tipo
-`openssl rand -base64 32`, documentada no `.env.example`/README — mesmo
-padrão do `JWT_SECRET` hoje). `apiKeyLast4` guardado separado pra exibir
-mascarado sem precisar decriptar.
-
-## 14. Nova página `/config-ia`
-
-`app/config-ia/page.tsx`, mesmo padrão de `app/docs/page.tsx`. Lista
-providers (label, tipo, modelo, prioridade, habilitado, `apiKeyLast4`,
-estatísticas calculadas via query — sucesso %, latência média — e estado
-do circuit breaker se em cooldown), formulário de
-adicionar/editar/remover/reordenar. Entra no `middleware.ts`:
-
-```ts
-matcher: [
-  '/', '/docs/:path*', '/config-ia',
-  '/api/spec/:path*', '/api/specs/:path*', '/api/proxy/:path*',
-  '/api/config-ia/:path*', '/api/ai/:path*',
-]
-```
-
-## 15. Segurança / auditoria
-
-- `config-ia` e `/api/ai/*` atrás do gate de sessão existente.
-- Chave criptografada em repouso, nunca logada, nunca decriptada de
-  volta pro client.
-- `/api/ai/*` roda no servidor — chave nunca chega no browser.
-- Audita `ai.config_updated`. Mensagens de chat não viram `audit_logs`
-  (a tabela `ai_messages` já cobre com mais contexto útil).
-
-## 16. Testes
-
-- `lib/ai/crypto.test.ts`: round-trip encrypt/decrypt.
-- `lib/ai/groq-client.test.ts` (nome genérico:
-  `lib/ai/provider-client.test.ts`): fallback pula em 429/401, respeita
-  `cooldown_until`, propaga erro se todos falharem.
-- `lib/ai/context.test.ts`: resumo estruturado, cache com TTL,
-  invalidação manual.
-- `app/api/config-ia/route.test.ts`: `PUT` substitui a lista, `GET`
-  nunca devolve chave real.
-- Manual: chat sobre a spec aberta, `@menção`, forçar erro na chave
-  primária (fallback + cooldown), estourar limite de tokens, exportar
-  Markdown, título automático aparecendo.
-
-## Fora de escopo (documentado, não faço sem pedido explícito)
-
-- Adapters nativos Anthropic/Gemini, seletor de modelo por conversa,
-  modo de busca web do Perplexity (seção 4).
-- Drill-down automático de schema por operação (seção 5).
-- Custo estimado por provider (seção 4).
-- Limite de uso por usuário individual (não existe conceito de usuário
-  além do login único compartilhado).
-
-## Perguntas antes de eu implementar
-
-1. `PUT /api/config-ia` substituindo a lista inteira de providers está
-   bom, ou prefere CRUD individual por provider? Manter PUT /api/config-ia substituindo a lista inteira.
-2. Os tempos de cooldown do circuit breaker (15min pra 401/403, 5min ou
-   `Retry-After` pra 429) fazem sentido como ponto de partida? Sim.
-3. Os limites de tokens (`AI_RATE_LIMIT_TOKENS_PER_HOUR`/`_PER_DAY`)
-   ficam sem valor padrão (desabilitado até configurar) ou já entra com
-   algum default conservador? Definir valores padrão conservadores de AI_RATE_LIMIT_TOKENS_PER_HOUR=500000 e AI_RATE_LIMIT_TOKENS_PER_DAY=5000000 mas mantenha disponivel a configuração para auterar esses valores depois.
+- `npm run lint`, `npx tsc --noEmit`, `npm test`.
+- `bash scripts/_run-integration.sh` (Postgres descartável `apihub_test` — nunca
+  apontar `DATABASE_URL` de integração pro banco real).
+- Manual: Cmd+K em `/`, `/admin/users`, `/config-ia`; CTA da home abrindo o
+  palette; item "Documentação do API Hub" navegando para `/docs`; usuário de
+  grupo restrito não vê spec fora da lista (palette, `/docs/[slug]` → 404, chat);
+  usuário sem `proxy.use` sem o TryIt e `/api/proxy` → 403; criação de usuário
+  exigindo name/email (email duplicado → erro); clique no provider abrindo o
+  sheet com o relatório completo.

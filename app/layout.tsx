@@ -2,6 +2,8 @@ import type { Metadata, Viewport } from 'next'
 import { Geist, Geist_Mono } from 'next/font/google'
 import { ThemeProvider } from 'next-themes'
 import { Toaster } from '@/components/ui/sonner'
+import { SessionProvider } from '@/components/session-provider'
+import { CommandPaletteProvider } from '@/components/command-palette/command-palette-provider'
 import './globals.css'
 
 const geistSans = Geist({ variable: '--font-geist-sans', subsets: ['latin'] })
@@ -43,7 +45,9 @@ export default function RootLayout({
           storageKey="apihub-theme"
           disableTransitionOnChange
         >
-          {children}
+          <SessionProvider>
+            <CommandPaletteProvider>{children}</CommandPaletteProvider>
+          </SessionProvider>
           <Toaster />
         </ThemeProvider>
       </body>

@@ -1,20 +1,16 @@
 'use client'
 
-import { CircleAlert } from 'lucide-react'
-import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { parseOpenAPI } from '@/lib/openapi/parser'
 import { apiHubSpec } from '@/lib/openapi/api-hub-spec'
-import { extractSpecInfo } from '@/lib/openapi/spec-info'
 import type { ParsedOperation } from '@/lib/openapi/types'
+import { useCommandPalette } from '@/components/command-palette/command-palette-provider'
 import { AiChatDialog } from './ai-chat-dialog'
 import { EndpointView } from './endpoint-view'
 import { Header } from './header'
 import { Overview } from './overview'
 import { Sidebar } from './sidebar'
-import { SpecSwitcher } from './spec-switcher'
 
 export function ApiHub({
   initialRawSpec,
@@ -26,20 +22,20 @@ export function ApiHub({
   const rawSpec = initialRawSpec ?? apiHubSpec
   const sourceUrl = initialSourceUrl ?? null
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [loadError, setLoadError] = useState<string | null>(null)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
-  const [switcherOpen, setSwitcherOpen] = useState(false)
   const [aiChatOpen, setAiChatOpen] = useState(false)
-  const router = useRouter()
+  const { openPalette, setDocsContext } = useCommandPalette()
 
+  // Registra no palette global qual spec está aberta e como abrir o chat —
+  // o grupo "Assistente" do palette só existe enquanto o docs está montado.
+  useEffect(() => {
+    setDocsContext({ sourceUrl, openAiChat: () => setAiChatOpen(true) })
+    return () => setDocsContext(null)
+  }, [sourceUrl, setDocsContext])
+
+  // Cmd+K é do palette global (provider); aqui fica só o atalho do chat.
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
-        e.preventDefault()
-        setSwitcherOpen((v) => !v)
-        return
-      }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'i') {
         if (!sourceUrl) return
         e.preventDefault()
@@ -69,67 +65,13 @@ export function ApiHub({
     setMobileNavOpen(false)
   }, [])
 
-  const loadSpec = useCallback(
-    async (url: string) => {
-      setLoading(true)
-      setLoadError(null)
-      try {
-        const res = await fetch(`/api/spec?url=${encodeURIComponent(url)}`)
-        const data = await res.json()
-        if (!res.ok) {
-          const message = data.error ?? 'Não foi possível carregar a especificação.'
-          setLoadError(message)
-          toast.error(message)
-          return
-        }
-
-        const fetchedSpec = data.spec as Record<string, unknown>
-        const { title, description, version } = extractSpecInfo(fetchedSpec, url)
-
-        const registerRes = await fetch('/api/specs', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sourceUrl: url, title, description, version }),
-        })
-        const registerData = await registerRes.json()
-        if (!registerRes.ok) {
-          const message = registerData.error ?? 'Não foi possível registrar a especificação.'
-          setLoadError(message)
-          toast.error(message)
-          return
-        }
-
-        toast.success(`Spec "${title}" adicionada com sucesso.`)
-        router.push(`/docs/${registerData.slug as string}`)
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'Erro de rede inesperado.'
-        setLoadError(message)
-        toast.error(message)
-      } finally {
-        setLoading(false)
-      }
-    },
-    [router],
-  )
-
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-background">
       <Header
         title={spec.info.title ?? 'Documentação'}
-        loading={loading}
-        onOpenSwitcher={() => setSwitcherOpen(true)}
+        onOpenSwitcher={openPalette}
         onToggleSidebar={() => setMobileNavOpen((v) => !v)}
         onHome={handleHome}
-      />
-
-      <SpecSwitcher
-        open={switcherOpen}
-        onOpenChange={setSwitcherOpen}
-        sourceUrl={sourceUrl}
-        loading={loading}
-        onLoad={loadSpec}
-        hasAiChat={sourceUrl !== null}
-        onOpenAiChat={() => setAiChatOpen(true)}
       />
 
       {sourceUrl && (
@@ -139,20 +81,6 @@ export function ApiHub({
           sourceUrl={sourceUrl}
           specTitle={spec.info.title ?? 'API'}
         />
-      )}
-
-      {loadError && (
-        <div className="flex items-center gap-2 border-b border-method-delete/30 bg-method-delete/10 px-4 py-2 text-[13px] text-method-delete xl:px-6">
-          <CircleAlert className="size-4 shrink-0" />
-          <span>{loadError}</span>
-          <button
-            type="button"
-            onClick={() => setLoadError(null)}
-            className="ml-auto text-xs underline-offset-2 hover:underline"
-          >
-            Dispensar
-          </button>
-        </div>
       )}
 
       <div className="relative flex min-h-0 flex-1">

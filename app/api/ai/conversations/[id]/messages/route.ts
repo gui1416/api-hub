@@ -1,11 +1,13 @@
 import { NextResponse } from 'next/server'
 import { and, asc, desc, eq, isNull, lt, or } from 'drizzle-orm'
 import { db } from '@/lib/db/client'
-import { aiConversations, aiMessages, aiProviders } from '@/lib/db/schema'
+import { aiConversations, aiMessages, aiProviders, aiSettings, users } from '@/lib/db/schema'
+import { canAccessSpecSource, getAllowedSpecSlugs, isSpecAllowed } from '@/lib/spec-access'
 import { getSpec } from '@/lib/specs-store'
 import { fetchSpec } from '@/lib/openapi/fetch-spec'
-import { getSpecContext, summarizeSpec } from '@/lib/ai/context'
+import { buildUserContext, getSpecContext, summarizeSpec } from '@/lib/ai/context'
 import { checkTokenRateLimit } from '@/lib/ai/rate-limit'
+import { getRequestUser } from '@/lib/request-identity'
 import {
   runChatCompletion,
   type AiProviderRow,
@@ -25,6 +27,21 @@ const TITLE_MAX_LENGTH = 50
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
+
+  const requester = await getRequestUser(request)
+  if (!requester) {
+    return NextResponse.json({ error: 'Não autenticado.' }, { status: 401 })
+  }
+
+  // 404 (e não 403) pra conversa de outro usuário: não vaza a existência.
+  const [conversation] = await db
+    .select({ userId: aiConversations.userId })
+    .from(aiConversations)
+    .where(eq(aiConversations.id, id))
+    .limit(1)
+  if (!conversation || conversation.userId !== requester.id) {
+    return NextResponse.json({ error: 'Conversa não encontrada.' }, { status: 404 })
+  }
 
   const rows = await db
     .select()
@@ -148,6 +165,11 @@ async function* persistAndStream(
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
 
+  const requester = await getRequestUser(request)
+  if (!requester) {
+    return NextResponse.json({ error: 'Não autenticado.' }, { status: 401 })
+  }
+
   let payload: { content?: string; mentionedSpecIds?: string[] }
   try {
     payload = await request.json()
@@ -170,7 +192,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     conversation = undefined
   }
 
-  if (!conversation) {
+  // 404 também pra conversa de outro usuário — histórico isolado por dono.
+  if (!conversation || conversation.userId !== requester.id) {
+    return NextResponse.json({ error: 'Conversa não encontrada.' }, { status: 404 })
+  }
+
+  // ACL por spec: cobre conversa antiga em spec que ficou restrita depois.
+  if (!(await canAccessSpecSource(requester.id, conversation.specSourceUrl))) {
     return NextResponse.json({ error: 'Conversa não encontrada.' }, { status: 404 })
   }
 
@@ -198,15 +226,36 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       )
       const summaries = [summarizeSpec(mainParsed)]
 
+      // @menções passam pela ACL por spec: uma spec fora dos grupos do
+      // usuário não pode vazar pro prompt via menção.
+      const allowed = await getAllowedSpecSlugs(requester!.id)
       for (const slug of mentionedSpecIds) {
+        if (!isSpecAllowed(allowed, slug)) continue
         const spec = await getSpec(slug)
         if (!spec) continue
         const parsed = await getSpecContext(spec.sourceUrl, () => fetchSpec(spec.sourceUrl))
         summaries.push(summarizeSpec(parsed))
       }
 
+      const [settings] = await db
+        .select({ systemPromptRules: aiSettings.systemPromptRules })
+        .from(aiSettings)
+        .limit(1)
+      const rules = settings?.systemPromptRules?.trim()
+
+      // Perfil (name/cargo/empresa) enriquece o contexto derivado — continua
+      // sem campo de texto livre, só dados que o admin cadastrou.
+      const [profile] = await db
+        .select({ name: users.name, company: users.company, jobTitle: users.jobTitle })
+        .from(users)
+        .where(eq(users.id, requester!.id))
+        .limit(1)
+
       systemPrompt =
-        'Você é um assistente que ajuda a entender a(s) API(s) documentada(s) abaixo. Responda em português. \n\n' +
+        'Você é um assistente que ajuda a entender a(s) API(s) documentada(s) abaixo. Responda em português. ' +
+        (rules ? `\n\nRegras definidas pelo administrador:\n${rules}` : '') +
+        `\n\nContexto do usuário atual:\n${buildUserContext({ ...requester!, ...profile })}` +
+        '\n\n' +
         JSON.stringify(summaries)
     } catch {
       yield { type: 'error', message: 'Falha ao carregar o contexto da especificação para o chat.' }

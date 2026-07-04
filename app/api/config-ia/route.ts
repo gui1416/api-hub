@@ -103,7 +103,7 @@ export async function PUT(request: Request) {
   }
 
   const session = await getSessionFromRequest(request)
-  const actor = session?.sub ?? 'anonymous'
+  const actor = session?.username ?? 'anonymous'
 
   try {
     const saved = await db.transaction(async (tx) => {

@@ -1,5 +1,5 @@
 import { desc, eq } from 'drizzle-orm'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/audit', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/audit')>()
@@ -8,7 +8,8 @@ vi.mock('@/lib/audit', async (importOriginal) => {
 
 import { logAudit } from '@/lib/audit'
 import { db } from '@/lib/db/client'
-import { auditLogs, specs } from '@/lib/db/schema'
+import { auditLogs, specs, users } from '@/lib/db/schema'
+import { hashPassword } from '@/lib/passwords'
 import { POST as loginPost } from '@/app/api/auth/login/route'
 import { POST as logoutPost } from '@/app/api/auth/logout/route'
 import { POST as specsPost } from '@/app/api/specs/route'
@@ -20,9 +21,17 @@ const mockedLogAudit = vi.mocked(logAudit)
 const AUTH_USERNAME = process.env.AUTH_USERNAME!
 const AUTH_PASSWORD = process.env.AUTH_PASSWORD!
 
+// Hash uma vez só (bcrypt é caro) e reusa em todos os testes.
+let passwordHash: string
+beforeAll(async () => {
+  passwordHash = await hashPassword(AUTH_PASSWORD)
+})
+
 beforeEach(async () => {
   await db.delete(auditLogs)
   await db.delete(specs)
+  await db.delete(users).where(eq(users.username, AUTH_USERNAME))
+  await db.insert(users).values({ username: AUTH_USERNAME, name: AUTH_USERNAME, passwordHash })
 })
 
 afterEach(() => {
@@ -87,6 +96,41 @@ describe('POST /api/auth/login', () => {
     expect(res.status).toBe(500)
     // No session cookie should have been issued.
     expect(res.headers.get('set-cookie')).toBeNull()
+  })
+
+  it('rejects a disabled user with 403 even with the right password', async () => {
+    await db
+      .update(users)
+      .set({ status: 'disabled' })
+      .where(eq(users.username, AUTH_USERNAME))
+    const res = await loginPost(
+      jsonRequest('http://test/api/auth/login', {
+        username: AUTH_USERNAME,
+        password: AUTH_PASSWORD,
+      }),
+    )
+    expect(res.status).toBe(403)
+    expect(res.headers.get('set-cookie')).toBeNull()
+    const row = await lastAuditRow()
+    expect(row).toMatchObject({ action: 'auth.login', status: 'failure' })
+    expect(row.metadata).toMatchObject({ reason: 'disabled' })
+  })
+
+  it('reports mustChangePassword and updates lastLoginAt on success', async () => {
+    await db
+      .update(users)
+      .set({ mustChangePassword: true })
+      .where(eq(users.username, AUTH_USERNAME))
+    const res = await loginPost(
+      jsonRequest('http://test/api/auth/login', {
+        username: AUTH_USERNAME,
+        password: AUTH_PASSWORD,
+      }),
+    )
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ mustChangePassword: true })
+    const [row] = await db.select().from(users).where(eq(users.username, AUTH_USERNAME))
+    expect(row.lastLoginAt).not.toBeNull()
   })
 })
 

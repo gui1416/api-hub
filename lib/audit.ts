@@ -9,6 +9,22 @@ export type AuditAction =
   | 'spec.deleted'
   | 'proxy.request'
   | 'ai.config_updated'
+  | 'user.created'
+  | 'user.updated'
+  | 'user.activated'
+  | 'user.deactivated'
+  | 'user.deleted'
+  | 'user.password_reset'
+  | 'user.password_changed'
+  | 'user.groups_updated'
+  | 'group.created'
+  | 'group.updated'
+  | 'group.deleted'
+  | 'group.permissions_updated'
+  | 'group.specs_updated'
+  | 'group.members_updated'
+  | 'permission.created'
+  | 'permission.deleted'
 
 export interface AuditEntry {
   action: AuditAction

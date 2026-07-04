@@ -1,15 +1,17 @@
-import { createHash, timingSafeEqual } from 'node:crypto'
+import { eq } from 'drizzle-orm'
 import { NextResponse } from 'next/server'
 import { createSessionToken, sessionCookieOptions, SESSION_COOKIE } from '@/lib/auth'
+import { verifyPassword } from '@/lib/passwords'
+import { db } from '@/lib/db/client'
+import { users } from '@/lib/db/schema'
 import { logAudit } from '@/lib/audit'
 
 export const runtime = 'nodejs'
 
-function safeEqual(a: string, b: string): boolean {
-  const hashA = createHash('sha256').update(a).digest()
-  const hashB = createHash('sha256').update(b).digest()
-  return timingSafeEqual(hashA, hashB)
-}
+// Hash bcrypt de descarte usado quando o username não existe: mantém o tempo
+// de resposta parecido com o de uma senha errada, evitando enumeração de
+// usernames por timing.
+const DUMMY_HASH = '$2b$10$C6UzMDM.H6dfI/f/IKcEeO7ZBpUvbEwzcZBlDcyC1eIkTGGlVIQPa'
 
 export async function POST(request: Request) {
   let payload: { username?: string; password?: string }
@@ -23,27 +25,25 @@ export async function POST(request: Request) {
   }
 
   const { username, password } = payload
-  const expectedUsername = process.env.AUTH_USERNAME
-  const expectedPassword = process.env.AUTH_PASSWORD
 
-  if (!expectedUsername || !expectedPassword) {
-    return NextResponse.json(
-      { error: 'Login não configurado no servidor.' },
-      { status: 500 },
-    )
-  }
+  // Mesmo sem credenciais completas a tentativa é auditada (actor
+  // 'anonymous'), então só desviamos do fluxo depois do logAudit.
+  const [user] = username
+    ? await db.select().from(users).where(eq(users.username, username)).limit(1)
+    : [undefined]
 
-  const credentialsValid =
-    !!username &&
-    !!password &&
-    safeEqual(username, expectedUsername) &&
-    safeEqual(password, expectedPassword)
+  const passwordValid = password
+    ? await verifyPassword(password, user?.passwordHash ?? DUMMY_HASH)
+    : false
+  const credentialsValid = !!user && passwordValid
+  const active = credentialsValid && user.status === 'active'
 
   try {
     await logAudit({
       action: 'auth.login',
       actor: username || 'anonymous',
-      status: credentialsValid ? 'success' : 'failure',
+      status: active ? 'success' : 'failure',
+      metadata: credentialsValid && !active ? { reason: 'disabled' } : undefined,
       request,
     })
   } catch {
@@ -60,8 +60,27 @@ export async function POST(request: Request) {
     )
   }
 
-  const token = await createSessionToken(username!)
-  const res = NextResponse.json({ ok: true })
+  if (!active) {
+    return NextResponse.json(
+      { error: 'Este usuário está desativado. Fale com um administrador.' },
+      { status: 403 },
+    )
+  }
+
+  await db
+    .update(users)
+    .set({ lastLoginAt: new Date(), updatedAt: new Date() })
+    .where(eq(users.id, user.id))
+
+  const token = await createSessionToken({
+    sub: user.id,
+    username: user.username,
+    mustChangePassword: user.mustChangePassword,
+  })
+  const res = NextResponse.json({
+    ok: true,
+    mustChangePassword: user.mustChangePassword,
+  })
   res.cookies.set(SESSION_COOKIE, token, sessionCookieOptions)
   return res
 }

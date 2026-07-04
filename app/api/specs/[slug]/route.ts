@@ -12,7 +12,7 @@ export async function DELETE(
 ) {
   const { slug } = await params
   const session = await getSessionFromRequest(request)
-  const actor = session?.sub ?? 'anonymous'
+  const actor = session?.username ?? 'anonymous'
 
   let removed: boolean
   try {

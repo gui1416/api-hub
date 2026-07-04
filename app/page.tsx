@@ -1,6 +1,6 @@
-import { Boxes, FileCode2, Link2, Play } from 'lucide-react'
-import Link from 'next/link'
-import { LogoutButton } from '@/components/api-hub/logout-button'
+import { FileCode2, Link2, Play } from 'lucide-react'
+import { AppHeader } from '@/components/app-shell/app-header'
+import { OpenDocsButton } from '@/components/app-shell/open-docs-button'
 
 const features = [
   {
@@ -29,25 +29,7 @@ const features = [
 export default function HomePage() {
   return (
     <div className="flex min-h-dvh flex-col bg-background">
-      <header className="flex h-14 items-center px-4 xl:px-6">
-        <div className="flex items-center gap-2.5">
-          <span className="flex size-7 items-center justify-center rounded-md bg-brand text-brand-foreground">
-            <Boxes className="size-4" />
-          </span>
-          <span className="text-sm font-semibold tracking-tight text-foreground">
-            API Hub
-          </span>
-        </div>
-        <div className="ml-auto flex items-center gap-2">
-          <Link
-            href="/docs"
-            className="inline-flex h-8 items-center rounded-md border border-border px-3 text-xs font-medium text-foreground transition-colors hover:bg-muted"
-          >
-            Ir para a documentação
-          </Link>
-          <LogoutButton />
-        </div>
-      </header>
+      <AppHeader />
 
       <main className="flex flex-1 flex-col items-center justify-center px-4 py-16 text-center">
         <h1 className="max-w-2xl text-balance text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
@@ -58,12 +40,11 @@ export default function HomePage() {
           moderna, elegante e interativa, alinhada à identidade visual do seu
           produto.
         </p>
-        <Link
-          href="/docs"
-          className="mt-8 inline-flex h-10 items-center justify-center rounded-lg bg-brand px-5 text-sm font-semibold text-brand-foreground transition-opacity hover:opacity-90"
-        >
+        {/* Abre o command palette em vez de navegar: o usuário escolhe a
+            spec (a doc padrão do hub aparece na lista como uma delas). */}
+        <OpenDocsButton className="mt-8 inline-flex h-10 items-center justify-center rounded-lg bg-brand px-5 text-sm font-semibold text-brand-foreground transition-opacity hover:opacity-90">
           Acessar documentação
-        </Link>
+        </OpenDocsButton>
 
         <div className="mt-20 grid w-full max-w-4xl gap-6 text-left sm:grid-cols-3">
           {features.map((feature) => (

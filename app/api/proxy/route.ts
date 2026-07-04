@@ -51,7 +51,7 @@ export async function POST(request: Request) {
   const hasBody = !['GET', 'HEAD'].includes(method.toUpperCase()) && body
 
   const session = await getSessionFromRequest(request)
-  const actor = session?.sub ?? 'anonymous'
+  const actor = session?.username ?? 'anonymous'
   const upperMethod = method.toUpperCase()
   const targetUrl = target.toString()
 

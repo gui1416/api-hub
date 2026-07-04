@@ -5,6 +5,7 @@ import type {
   ParsedOperation,
   ParsedSpec,
 } from '@/lib/openapi/types'
+import { useSession } from '@/components/session-provider'
 import { CodePanel } from './code-panel'
 import { MethodBadge } from './method-badge'
 import { ParamTable } from './param-table'
@@ -51,6 +52,8 @@ export function EndpointView({
   spec: ParsedSpec
   sourceUrl: string | null
 }) {
+  const { me } = useSession()
+  const canUseProxy = me?.permissions.includes('proxy.use') ?? false
   const baseUrl = resolveBaseUrl(spec, sourceUrl)
   const pathParams = operation.parameters.filter((p) => p.in === 'path')
   const queryParams = operation.parameters.filter((p) => p.in === 'query')
@@ -157,11 +160,15 @@ export function EndpointView({
       <div className="min-w-0 lg:sticky lg:top-20 lg:self-start">
         <div className="space-y-4">
           <CodePanel operation={operation} baseUrl={baseUrl} />
-          <TryIt
-            operation={operation}
-            baseUrl={baseUrl}
-            securitySchemes={spec.securitySchemes}
-          />
+          {/* "Testar endpoint" é a ação proxy.use — sem ela o painel some
+              (o middleware bloqueia /api/proxy de qualquer forma). */}
+          {canUseProxy && (
+            <TryIt
+              operation={operation}
+              baseUrl={baseUrl}
+              securitySchemes={spec.securitySchemes}
+            />
+          )}
         </div>
       </div>
     </div>

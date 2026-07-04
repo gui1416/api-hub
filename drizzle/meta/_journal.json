@@ -22,6 +22,27 @@
       "when": 1782935617674,
       "tag": "0002_white_hannibal_king",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1783128893500,
+      "tag": "0003_complex_titania",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1783164098374,
+      "tag": "0004_spotty_vin_gonzales",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1783185852726,
+      "tag": "0005_bizarre_the_executioner",
+      "breakpoints": true
     }
   ]
 }

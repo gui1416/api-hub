@@ -27,6 +27,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import { ProviderUsageSheet } from './provider-usage-sheet'
 
 export interface ConfigIaProvider {
   id: string
@@ -107,6 +108,9 @@ export function ConfigIaManager({
   const [formState, setFormState] = useState<FormState | null>(null)
   const [pendingRemove, setPendingRemove] = useState<EditableProvider | null>(null)
   const [saving, setSaving] = useState(false)
+  // Relatório de uso (sheet lateral) — só pra providers já salvos (com id).
+  const [usageProviderId, setUsageProviderId] = useState<string | null>(null)
+  const [usageOpen, setUsageOpen] = useState(false)
 
   // router.refresh() re-runs the server component and passes fresh props
   // into this already-mounted client component (e.g. new ids for providers
@@ -341,7 +345,17 @@ export function ConfigIaManager({
                   </Button>
                 </div>
 
-                <div className="min-w-0 flex-1">
+                <button
+                  type="button"
+                  disabled={!p.id}
+                  onClick={() => {
+                    if (!p.id) return
+                    setUsageProviderId(p.id)
+                    setUsageOpen(true)
+                  }}
+                  title={p.id ? 'Ver relatório de uso' : 'Salve o provider para ver o relatório de uso'}
+                  className="min-w-0 flex-1 rounded-md text-left transition-colors enabled:cursor-pointer enabled:hover:bg-muted/40"
+                >
                   <div className="flex flex-wrap items-center gap-1.5">
                     <span className="font-medium text-foreground">{p.label}</span>
                     <Badge variant="outline">{p.providerType}</Badge>
@@ -368,7 +382,7 @@ export function ConfigIaManager({
                       </>
                     )}
                   </p>
-                </div>
+                </button>
 
                 <div className="flex shrink-0 items-center gap-2">
                   <Switch
@@ -494,6 +508,12 @@ export function ConfigIaManager({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <ProviderUsageSheet
+        providerId={usageProviderId}
+        open={usageOpen}
+        onOpenChange={setUsageOpen}
+      />
     </div>
   )
 }

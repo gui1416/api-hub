@@ -1,0 +1,1 @@
+ALTER TABLE "groups" ADD COLUMN "hub_docs" boolean DEFAULT true NOT NULL;

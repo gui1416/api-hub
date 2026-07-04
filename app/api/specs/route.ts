@@ -1,14 +1,28 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db/client'
 import { getSessionFromRequest } from '@/lib/auth'
+import { getRequestUser } from '@/lib/request-identity'
+import { getAllowedSpecSlugs, isSpecAllowed } from '@/lib/spec-access'
 import { logAudit } from '@/lib/audit'
 import { listSpecs, saveSpec } from '@/lib/specs-store'
 
 export const runtime = 'nodejs'
 
-export async function GET() {
-  const specs = await listSpecs()
-  return NextResponse.json({ specs })
+export async function GET(request: Request) {
+  const requester = await getRequestUser(request)
+  if (!requester) {
+    return NextResponse.json({ error: 'Não autenticado.' }, { status: 401 })
+  }
+
+  // ACL por spec: a lista já vem filtrada pro usuário — o switcher e o
+  // @menção do chat só enxergam o que os grupos dele permitem.
+  const [specs, allowed] = await Promise.all([
+    listSpecs(),
+    getAllowedSpecSlugs(requester.id),
+  ])
+  return NextResponse.json({
+    specs: specs.filter((spec) => isSpecAllowed(allowed, spec.slug)),
+  })
 }
 
 export async function POST(request: Request) {
@@ -36,7 +50,7 @@ export async function POST(request: Request) {
   }
 
   const session = await getSessionFromRequest(request)
-  const actor = session?.sub ?? 'anonymous'
+  const actor = session?.username ?? 'anonymous'
 
   try {
     const { record } = await db.transaction(async (tx) => {

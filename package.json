@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint .",
     "test": "vitest run --config vitest.config.ts",
-    "test:integration": "vitest run --config vitest.integration.config.ts"
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "seed:admin": "node scripts/seed-admin.mjs"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^3.0.3",
@@ -16,6 +17,7 @@
     "@shadcn/react": "^0.2.0",
     "@vercel/analytics": "1.6.1",
     "ai": "^7.0.11",
+    "bcryptjs": "^3.0.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",

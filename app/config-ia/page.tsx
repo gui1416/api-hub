@@ -1,7 +1,12 @@
 import { and, asc, eq, isNotNull, sql } from 'drizzle-orm'
 import { db } from '@/lib/db/client'
-import { aiMessages, aiProviders } from '@/lib/db/schema'
+
+// Sem prerender estático: providers/regras mudam em runtime e o
+// router.refresh() do manager precisa devolver dados frescos.
+export const dynamic = 'force-dynamic'
+import { aiMessages, aiProviders, aiSettings } from '@/lib/db/schema'
 import { ConfigIaManager } from '@/components/config-ia/config-ia-manager'
+import { AiRulesForm } from '@/components/config-ia/ai-rules-form'
 
 // Kept outside the component body so the lint rule that forbids calling
 // impure functions (Date.now()) directly during render doesn't flag it —
@@ -12,6 +17,7 @@ function isInCooldown(cooldownUntil: Date | null): boolean {
 
 export default async function ConfigIaPage() {
   const providerRows = await db.select().from(aiProviders).orderBy(asc(aiProviders.priority))
+  const [settingsRow] = await db.select().from(aiSettings).limit(1)
 
   const statsRows = await db
     .select({
@@ -46,5 +52,10 @@ export default async function ConfigIaPage() {
       count: Number(row.count ?? 0),
     }))
 
-  return <ConfigIaManager initialProviders={providers} stats={stats} />
+  return (
+    <>
+      <ConfigIaManager initialProviders={providers} stats={stats} />
+      <AiRulesForm initialRules={settingsRow?.systemPromptRules ?? null} />
+    </>
+  )
 }

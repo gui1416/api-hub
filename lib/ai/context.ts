@@ -34,6 +34,32 @@ export function summarizeSpec(parsed: ParsedSpec): SpecSummary {
   }
 }
 
+/**
+ * Bloco de contexto por usuário injetado no systemPrompt — derivado
+ * automaticamente de quem está perguntando (username, grupos, permissões),
+ * sem campo de texto livre: usuário nenhum consegue injetar conteúdo
+ * arbitrário no prompt.
+ */
+export function buildUserContext(user: {
+  username: string
+  name?: string | null
+  company?: string | null
+  jobTitle?: string | null
+  groups: string[]
+  permissions: string[]
+}): string {
+  const lines = [
+    `Usuário: ${user.name ? `${user.name} (${user.username})` : user.username}`,
+  ]
+  if (user.jobTitle) lines.push(`Cargo: ${user.jobTitle}`)
+  if (user.company) lines.push(`Empresa: ${user.company}`)
+  lines.push(
+    `Grupos: ${user.groups.length > 0 ? user.groups.join(', ') : '(nenhum)'}`,
+    `Permissões: ${user.permissions.length > 0 ? user.permissions.join(', ') : '(nenhuma)'}`,
+  )
+  return lines.join('\n')
+}
+
 const CACHE_TTL_MS = 5 * 60 * 1000
 
 interface CacheEntry {
