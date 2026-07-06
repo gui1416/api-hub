@@ -43,6 +43,13 @@
       "when": 1783185852726,
       "tag": "0005_bizarre_the_executioner",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1783340298253,
+      "tag": "0006_admin_logs_permission",
+      "breakpoints": true
     }
   ]
 }

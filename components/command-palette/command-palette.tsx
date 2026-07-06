@@ -7,6 +7,7 @@ import {
   Boxes,
   LayoutDashboard,
   Link2,
+  ListOrdered,
   LoaderCircle,
   Settings2,
   Shield,
@@ -56,6 +57,7 @@ const ADMIN_ITEMS = [
   { label: 'Grupos e permissões', href: '/admin/groups', permission: 'admin.groups', icon: Shield },
   { label: 'Gestão de IA', href: '/config-ia', permission: 'admin.ai', icon: Settings2 },
   { label: 'Dashboard de uso', href: '/admin/dashboard', permission: 'admin.dashboard', icon: LayoutDashboard },
+  { label: 'Logs de auditoria', href: '/admin/logs', permission: 'admin.logs', icon: ListOrdered },
 ] as const
 
 /**

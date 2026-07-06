@@ -1,7 +1,6 @@
 'use client'
 
 import { LogOut } from 'lucide-react'
-import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 import { useSession } from '@/components/session-provider'
 import {
@@ -13,7 +12,6 @@ import {
 } from '@/components/ui/dropdown-menu'
 
 export function NavUser() {
-  const router = useRouter()
   const { me } = useSession()
   const [loading, setLoading] = useState(false)
 
@@ -21,8 +19,10 @@ export function NavUser() {
     setLoading(true)
     try {
       await fetch('/api/auth/logout', { method: 'POST' })
-      router.push('/')
-      router.refresh()
+      // router.push('/') pode servir uma navegação client-side cacheada de
+      // quando '/' ainda exigia essa sessão — força um load completo pra
+      // garantir que a página releia o cookie (já sem sessão) do zero.
+      window.location.href = '/'
     } finally {
       setLoading(false)
     }

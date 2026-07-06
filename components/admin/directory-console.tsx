@@ -124,6 +124,7 @@ const PROTECTED_KEYS = new Set([
   'admin.groups',
   'admin.ai',
   'admin.dashboard',
+  'admin.logs',
   'specs.load',
   'specs.delete',
   'proxy.use',
@@ -133,7 +134,14 @@ const PROTECTED_KEYS = new Set([
 
 // Macro (telas/rotas) vs micro (ações) — permissões criadas pela UI caem em
 // "Personalizadas". Derivado da chave no client; o catálogo no banco é plano.
-const SCREEN_KEYS = new Set(['docs.view', 'admin.users', 'admin.groups', 'admin.ai', 'admin.dashboard'])
+const SCREEN_KEYS = new Set([
+  'docs.view',
+  'admin.users',
+  'admin.groups',
+  'admin.ai',
+  'admin.dashboard',
+  'admin.logs',
+])
 const ACTION_KEYS = new Set(['specs.load', 'specs.delete', 'proxy.use', 'chat.use'])
 
 function categorizePermissions(permissions: DirPermission[]) {
@@ -868,7 +876,7 @@ export function DirectoryConsole({
 
         {container === 'users' && (
           <div className="mb-3 flex flex-wrap items-center gap-2">
-            <Select value={companyFilter} onValueChange={setCompanyFilter}>
+            <Select value={companyFilter} onValueChange={(value) => setCompanyFilter(value ?? 'all')}>
               <SelectTrigger size="sm" className="text-[13px]">
                 <Building2 className="size-3.5 text-muted-foreground" />
                 <SelectValue>{(value: string) => (value === 'all' ? 'Todas as empresas' : value)}</SelectValue>
@@ -882,7 +890,7 @@ export function DirectoryConsole({
                 ))}
               </SelectContent>
             </Select>
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <Select value={statusFilter} onValueChange={(value) => setStatusFilter(value ?? 'all')}>
               <SelectTrigger size="sm" className="text-[13px]">
                 <ShieldCheck className="size-3.5 text-muted-foreground" />
                 <SelectValue>
@@ -903,7 +911,7 @@ export function DirectoryConsole({
                 </SelectItem>
               </SelectContent>
             </Select>
-            <Select value={groupFilter} onValueChange={setGroupFilter}>
+            <Select value={groupFilter} onValueChange={(value) => setGroupFilter(value ?? 'all')}>
               <SelectTrigger size="sm" className="text-[13px]">
                 <Users className="size-3.5 text-muted-foreground" />
                 <SelectValue>
@@ -923,7 +931,7 @@ export function DirectoryConsole({
                 ))}
               </SelectContent>
             </Select>
-            <Select value={onlineFilter} onValueChange={setOnlineFilter}>
+            <Select value={onlineFilter} onValueChange={(value) => setOnlineFilter(value ?? 'all')}>
               <SelectTrigger size="sm" className="text-[13px]">
                 <Wifi className="size-3.5 text-muted-foreground" />
                 <SelectValue>

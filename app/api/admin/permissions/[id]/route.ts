@@ -15,6 +15,7 @@ const PROTECTED_KEYS = new Set([
   'admin.groups',
   'admin.ai',
   'admin.dashboard',
+  'admin.logs',
   'specs.load',
   'specs.delete',
   'proxy.use',

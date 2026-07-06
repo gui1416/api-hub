@@ -9,6 +9,9 @@ export type AuditAction =
   | 'spec.deleted'
   | 'proxy.request'
   | 'ai.config_updated'
+  | 'ai.provider_created'
+  | 'ai.provider_updated'
+  | 'ai.provider_deleted'
   | 'user.created'
   | 'user.updated'
   | 'user.activated'
@@ -26,16 +29,27 @@ export type AuditAction =
   | 'permission.created'
   | 'permission.deleted'
 
+/**
+ * Só o suficiente pra extrair ip/user-agent — um `Request` de verdade
+ * satisfaz isso estruturalmente (todo call site em route handler já passa um
+ * direto), mas também deixa passar o retorno de `headers()` do
+ * `next/headers` embrulhado em `{ headers }`, usado por Server Components
+ * (ex: o resync passivo de specs em app/docs/[slug]/page.tsx).
+ */
+export interface AuditRequestLike {
+  headers: { get(name: string): string | null }
+}
+
 export interface AuditEntry {
   action: AuditAction
   actor: string
   status: 'success' | 'failure'
   metadata?: Record<string, unknown>
   /** Used only to extract ip (x-forwarded-for) and user-agent. */
-  request?: Request
+  request?: AuditRequestLike
 }
 
-function extractIp(request: Request): string | null {
+function extractIp(request: AuditRequestLike): string | null {
   const forwardedFor = request.headers.get('x-forwarded-for')
   if (forwardedFor) return forwardedFor.split(',')[0].trim()
   return request.headers.get('x-real-ip')

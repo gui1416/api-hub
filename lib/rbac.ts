@@ -89,6 +89,7 @@ const ROUTE_PERMISSIONS: Array<{ prefix: string; permission: string; methods?: s
   { prefix: '/api/admin/permissions', permission: 'admin.groups' },
   { prefix: '/admin/dashboard', permission: 'admin.dashboard' },
   { prefix: '/api/admin/dashboard', permission: 'admin.dashboard' },
+  { prefix: '/admin/logs', permission: 'admin.logs' },
   { prefix: '/config-ia', permission: 'admin.ai' },
   { prefix: '/api/config-ia', permission: 'admin.ai' },
   { prefix: '/docs', permission: 'docs.view' },

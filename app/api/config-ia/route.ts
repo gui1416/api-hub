@@ -114,6 +114,19 @@ export async function PUT(request: Request) {
       const idsToDelete = existingRows.filter((row) => !keepIds.has(row.id)).map((row) => row.id)
       if (idsToDelete.length > 0) {
         await tx.delete(aiProviders).where(inArray(aiProviders.id, idsToDelete))
+        for (const row of existingRows) {
+          if (!idsToDelete.includes(row.id)) continue
+          await logAudit(
+            {
+              action: 'ai.provider_deleted',
+              actor,
+              status: 'success',
+              metadata: { label: row.label, model: row.model },
+              request,
+            },
+            tx,
+          )
+        }
       }
 
       const results: ProviderRow[] = []
@@ -140,6 +153,24 @@ export async function PUT(request: Request) {
             .where(eq(aiProviders.id, existing.id))
             .returning()
           results.push(updated)
+          // Nunca loga a key em si (nem last4 pra evitar dar dica do valor
+          // anterior) — só se ela foi trocada nesta edição.
+          await logAudit(
+            {
+              action: 'ai.provider_updated',
+              actor,
+              status: 'success',
+              metadata: {
+                label: updated.label,
+                model: updated.model,
+                baseUrl: updated.baseUrl,
+                enabled: updated.enabled,
+                keyRotated: Boolean(input.apiKey),
+              },
+              request,
+            },
+            tx,
+          )
         } else {
           const apiKey = input.apiKey as string
           const [created] = await tx
@@ -156,19 +187,23 @@ export async function PUT(request: Request) {
             })
             .returning()
           results.push(created)
+          await logAudit(
+            {
+              action: 'ai.provider_created',
+              actor,
+              status: 'success',
+              metadata: {
+                label: created.label,
+                model: created.model,
+                baseUrl: created.baseUrl,
+                enabled: created.enabled,
+              },
+              request,
+            },
+            tx,
+          )
         }
       }
-
-      await logAudit(
-        {
-          action: 'ai.config_updated',
-          actor,
-          status: 'success',
-          metadata: { count: inputs.length },
-          request,
-        },
-        tx,
-      )
 
       return results
     })

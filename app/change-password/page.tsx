@@ -1,14 +1,12 @@
 'use client'
 
 import { Boxes, CircleAlert, LoaderCircle } from 'lucide-react'
-import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 
 const inputClass =
   'h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground/60 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40'
 
 export default function ChangePasswordPage() {
-  const router = useRouter()
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -34,8 +32,10 @@ export default function ChangePasswordPage() {
         setError(data.error ?? 'Não foi possível trocar a senha.')
         return
       }
-      router.push('/')
-      router.refresh()
+      // Navegação client-side (router.push) pode servir um redirect antigo
+      // cacheado de quando '/' ainda mandava pra cá (mustChangePassword
+      // true) — força um load completo pra garantir a saída do gate.
+      window.location.href = '/'
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erro de rede inesperado.')
     } finally {
