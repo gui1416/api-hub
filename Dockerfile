@@ -26,6 +26,10 @@ FROM base AS runner
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
+# Fuso do processo Node — sobrescrevível no deploy (Coolify/docker run -e
+# TZ=...). lib/timezone.ts lê a mesma variável pro código do app (formatação
+# de datas, agregações por dia no Postgres).
+ENV TZ=America/Sao_Paulo
 RUN addgroup -S nodejs -g 1001 && adduser -S nextjs -u 1001 -G nodejs
 
 # Full production node_modules (covers both `next start`'s standalone

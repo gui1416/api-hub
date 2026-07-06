@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server'
 import { db } from '@/lib/db/client'
 import { aiConversations, aiMessages, aiProviders, users } from '@/lib/db/schema'
 import { getRequestUser } from '@/lib/request-identity'
+import { APP_TIMEZONE } from '@/lib/timezone'
 
 export const runtime = 'nodejs'
 
@@ -79,7 +80,10 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     gte(aiMessages.createdAt, since),
   )
 
-  const day = sql<string>`to_char(date_trunc('day', ${aiMessages.createdAt}), 'YYYY-MM-DD')`
+  // Agrupa pelo dia civil do fuso configurado (APP_TIMEZONE), não pelo dia
+  // UTC (o servidor roda em UTC) — sem isso, mensagens de madrugada/fim de
+  // dia caem no dia errado.
+  const day = sql<string>`to_char(date_trunc('day', ${aiMessages.createdAt} AT TIME ZONE ${APP_TIMEZONE}), 'YYYY-MM-DD')`
 
   const [totalsRows, byDay, byModel, byUser, fallbackRows] = await Promise.all([
     db.select({ label: sql<string>`'total'`, ...aggregates }).from(aiMessages).where(providerSince),

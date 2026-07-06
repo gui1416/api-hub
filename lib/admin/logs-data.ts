@@ -1,12 +1,13 @@
-import { and, desc, eq, gte, ilike, lte, sql, type SQL } from 'drizzle-orm'
+import { and, desc, eq, ilike, sql, type SQL } from 'drizzle-orm'
 import { db } from '@/lib/db/client'
 import { auditLogs } from '@/lib/db/schema'
+import { APP_TIMEZONE } from '@/lib/timezone'
 
 export interface AuditLogFilters {
   action?: string
   actor?: string
   status?: 'success' | 'failure'
-  /** Data inicial (yyyy-mm-dd), inclusive, no fuso local do servidor. */
+  /** Data inicial (yyyy-mm-dd), inclusive, no fuso configurado (APP_TIMEZONE). */
   from?: string
   /** Data final (yyyy-mm-dd), inclusive. */
   to?: string
@@ -37,8 +38,18 @@ function buildWhere(filters: AuditLogFilters): SQL | undefined {
   if (filters.action) conditions.push(eq(auditLogs.action, filters.action))
   if (filters.actor) conditions.push(ilike(auditLogs.actor, `%${filters.actor}%`))
   if (filters.status) conditions.push(eq(auditLogs.status, filters.status))
-  if (filters.from) conditions.push(gte(auditLogs.createdAt, new Date(`${filters.from}T00:00:00`)))
-  if (filters.to) conditions.push(lte(auditLogs.createdAt, new Date(`${filters.to}T23:59:59.999`)))
+  // "De"/"Até" são datas de calendário no fuso do app, não instantes UTC —
+  // converte pro fuso configurado antes de comparar com a data informada.
+  if (filters.from) {
+    conditions.push(
+      sql`(${auditLogs.createdAt} AT TIME ZONE ${APP_TIMEZONE}) >= ${filters.from}::date`,
+    )
+  }
+  if (filters.to) {
+    conditions.push(
+      sql`(${auditLogs.createdAt} AT TIME ZONE ${APP_TIMEZONE}) < ((${filters.to}::date) + interval '1 day')`,
+    )
+  }
   return conditions.length > 0 ? and(...conditions) : undefined
 }
 

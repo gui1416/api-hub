@@ -10,6 +10,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
+import { APP_TIMEZONE } from '@/lib/timezone'
 import { cn } from '@/lib/utils'
 
 type Range = '24h' | '7d' | '30d'
@@ -234,7 +235,9 @@ export function ProviderUsageSheet({
                   >
                     Em cooldown até{' '}
                     {provider.cooldownUntil
-                      ? new Date(provider.cooldownUntil).toLocaleTimeString('pt-BR')
+                      ? new Date(provider.cooldownUntil).toLocaleTimeString('pt-BR', {
+                          timeZone: APP_TIMEZONE,
+                        })
                       : '—'}
                   </Badge>
                 )}
@@ -291,7 +294,10 @@ export function ProviderUsageSheet({
 
               {provider?.lastFailureAt && (
                 <p className="text-[11px] text-muted-foreground">
-                  Última falha: {new Date(provider.lastFailureAt).toLocaleString('pt-BR')}
+                  Última falha:{' '}
+                  {new Date(provider.lastFailureAt).toLocaleString('pt-BR', {
+                    timeZone: APP_TIMEZONE,
+                  })}
                 </p>
               )}
             </>

@@ -27,6 +27,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import { APP_TIMEZONE } from '@/lib/timezone'
 import { ProviderUsageSheet } from './provider-usage-sheet'
 
 export interface ConfigIaProvider {
@@ -366,7 +367,11 @@ export function ConfigIaManager({
                         className="border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400"
                       >
                         Em cooldown até{' '}
-                        {p.cooldownUntil ? new Date(p.cooldownUntil).toLocaleTimeString('pt-BR') : '—'}
+                        {p.cooldownUntil
+                          ? new Date(p.cooldownUntil).toLocaleTimeString('pt-BR', {
+                              timeZone: APP_TIMEZONE,
+                            })
+                          : '—'}
                       </Badge>
                     )}
                   </div>

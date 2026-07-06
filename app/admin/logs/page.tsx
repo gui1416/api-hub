@@ -2,17 +2,19 @@ import Link from 'next/link'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { AuditLogFilterBar } from '@/components/admin/audit-log-filter-bar'
+import { AuditLogPageSize } from '@/components/admin/audit-log-page-size'
+import { DEFAULT_PAGE_SIZE, PAGE_SIZE_OPTIONS } from '@/lib/admin/log-page-size'
 import { loadAuditLogs } from '@/lib/admin/logs-data'
+import { APP_TIMEZONE } from '@/lib/timezone'
 import { cn } from '@/lib/utils'
 
 // Lê do banco a cada acesso — os logs mudam a todo momento (login, specs,
 // proxy, ações administrativas).
 export const dynamic = 'force-dynamic'
 
-const PAGE_SIZE = 50
-
 function formatDateTime(iso: string): string {
   return new Date(iso).toLocaleString('pt-BR', {
+    timeZone: APP_TIMEZONE,
     day: '2-digit',
     month: '2-digit',
     year: '2-digit',
@@ -38,6 +40,12 @@ export default async function AdminLogsPage({
   const from = param(sp.from)
   const to = param(sp.to)
   const page = Math.max(1, Number(param(sp.page)) || 1)
+  const requestedPageSize = Number(param(sp.pageSize))
+  const pageSize = PAGE_SIZE_OPTIONS.includes(
+    requestedPageSize as (typeof PAGE_SIZE_OPTIONS)[number],
+  )
+    ? requestedPageSize
+    : DEFAULT_PAGE_SIZE
 
   const { rows, total, actions } = await loadAuditLogs({
     actor: actor || undefined,
@@ -46,10 +54,10 @@ export default async function AdminLogsPage({
     from: from || undefined,
     to: to || undefined,
     page,
-    pageSize: PAGE_SIZE,
+    pageSize,
   })
 
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
+  const totalPages = Math.max(1, Math.ceil(total / pageSize))
 
   function pageHref(target: number) {
     const params = new URLSearchParams()
@@ -58,6 +66,7 @@ export default async function AdminLogsPage({
     if (statusParam !== 'all') params.set('status', statusParam)
     if (from) params.set('from', from)
     if (to) params.set('to', to)
+    if (pageSize !== DEFAULT_PAGE_SIZE) params.set('pageSize', String(pageSize))
     if (target > 1) params.set('page', String(target))
     const qs = params.toString()
     return qs ? `/admin/logs?${qs}` : '/admin/logs'
@@ -143,9 +152,12 @@ export default async function AdminLogsPage({
 
       {total > 0 && (
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-          <span>
-            {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, total)} de {total}
-          </span>
+          <div className="flex items-center gap-2">
+            <span>
+              {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, total)} de {total}
+            </span>
+            <AuditLogPageSize pageSize={pageSize} />
+          </div>
           <div className="flex items-center gap-1">
             <Link
               href={pageHref(Math.max(1, page - 1))}

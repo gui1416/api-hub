@@ -15,6 +15,7 @@ import {
   Trash2,
   Users,
 } from 'lucide-react'
+import { defaultFilter } from 'cmdk'
 import { toast } from 'sonner'
 import {
   CommandDialog,
@@ -49,6 +50,29 @@ interface SpecSummary {
 }
 
 const URL_PATTERN = /^https?:\/\/\S+$/i
+
+// Atalhos escondidos: "@" isola "Specs registradas", "admin" isola
+// "Administração" — cada CommandItem elegível carrega a tag correspondente
+// no próprio `value` (ex: "spec::minha api https://..."), lida só aqui.
+function stripPaletteTag(value: string): string {
+  const separatorIndex = value.indexOf('::')
+  return separatorIndex === -1 ? value : value.slice(separatorIndex + 2)
+}
+
+function paletteFilter(value: string, search: string, keywords?: string[]): number {
+  const trimmed = search.trim()
+  const isSpecShortcut = trimmed.startsWith('@')
+  const isAdminShortcut = /^admin\b/i.test(trimmed)
+
+  if (isSpecShortcut || isAdminShortcut) {
+    const tag = isSpecShortcut ? 'spec::' : 'admin::'
+    if (!value.startsWith(tag)) return 0
+    const query = isSpecShortcut ? trimmed.slice(1).trim() : trimmed.replace(/^admin\b/i, '').trim()
+    return query ? defaultFilter(stripPaletteTag(value), query, keywords) : 1
+  }
+
+  return defaultFilter(stripPaletteTag(value), search, keywords)
+}
 
 // Entradas administrativas do palette — cada uma só aparece pra quem tem a
 // permissão correspondente (a UI esconde; a garantia real é o middleware).
@@ -188,6 +212,7 @@ export function CommandPalette() {
         onOpenChange={setOpen}
         title="Navegar"
         description="Busque uma spec registrada, cole uma URL nova ou vá para uma tela"
+        commandProps={{ filter: paletteFilter }}
       >
         <CommandInput
           value={search}
@@ -210,7 +235,7 @@ export function CommandPalette() {
                       inclusive na ACL (groups.hubDocs decide quem a vê). */}
                   {(me?.hubDocs ?? false) && (
                     <CommandItem
-                      value="documentação do api hub padrão docs"
+                      value="spec::documentação do api hub padrão docs"
                       data-checked={pathname === '/docs' && sourceUrl === null}
                       onSelect={() => {
                         setOpen(false)
@@ -229,7 +254,7 @@ export function CommandPalette() {
                   {specs.map((spec) => (
                     <CommandItem
                       key={spec.slug}
-                      value={`${spec.title} ${spec.sourceUrl}`}
+                      value={`spec::${spec.title} ${spec.sourceUrl}`}
                       data-checked={spec.sourceUrl === sourceUrl}
                       onSelect={() => handleSelect(spec.slug)}
                       className="group/spec-item"
@@ -309,7 +334,7 @@ export function CommandPalette() {
                     {adminItems.map((item) => (
                       <CommandItem
                         key={item.href}
-                        value={`${item.label} administração`}
+                        value={`admin::${item.label} administração`}
                         onSelect={() => {
                           setOpen(false)
                           router.push(item.href)

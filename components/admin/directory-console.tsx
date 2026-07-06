@@ -61,6 +61,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useSession } from '@/components/session-provider'
+import { APP_TIMEZONE } from '@/lib/timezone'
 import { cn } from '@/lib/utils'
 
 // ---------------------------------------------------------------------------
@@ -165,6 +166,7 @@ const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const
 function formatDateTime(iso: string | null): string {
   if (!iso) return '—'
   return new Date(iso).toLocaleString('pt-BR', {
+    timeZone: APP_TIMEZONE,
     day: '2-digit',
     month: '2-digit',
     year: '2-digit',
