@@ -15,11 +15,18 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build
 
-# ---- Production-only dependencies (full install, no tracing gaps) ----
+# ---- Production-only dependencies ----
+# Pruned from the `deps` stage's already-installed tree instead of a second
+# full `npm ci` — the old version fetched+installed the whole registry graph
+# twice, running concurrently with `deps` (independent stages run in
+# parallel under BuildKit), which doubled peak install-time memory/network
+# and was a likely contributor to OOM kills on busy hosts. `npm prune` reads
+# package.json/package-lock.json and only touches local files, no registry
+# hit — must run after `deps` completes instead of alongside it.
 FROM base AS prod-deps
 COPY package.json package-lock.json ./
-RUN --mount=type=cache,target=/root/.npm \
-    npm ci --omit=dev --no-audit --no-fund
+COPY --from=deps /app/node_modules ./node_modules
+RUN npm prune --omit=dev --no-audit --no-fund
 
 # ---- Final runtime image ----
 FROM base AS runner
