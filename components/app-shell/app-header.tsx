@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { Boxes, Search } from 'lucide-react'
-import { LogoutButton } from '@/components/api-hub/logout-button'
+import { NavUser } from '@/components/api-hub/nav-user'
 import { ThemeToggle } from '@/components/api-hub/theme-toggle'
 import { useCommandPalette } from '@/components/command-palette/command-palette-provider'
 
@@ -60,7 +60,7 @@ export function AppHeader({
           </button>
         )}
         <ThemeToggle />
-        <LogoutButton />
+        <NavUser />
       </div>
     </header>
   )

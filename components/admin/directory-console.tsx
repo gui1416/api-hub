@@ -1,11 +1,12 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 import {
   BookOpen,
   Boxes,
+  Building2,
   Check,
   Copy,
   FolderTree,
@@ -19,6 +20,7 @@ import {
   Trash2,
   User,
   Users,
+  Wifi,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -51,6 +53,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { useSession } from '@/components/session-provider'
 import { cn } from '@/lib/utils'
 
@@ -142,6 +151,8 @@ function categorizePermissions(permissions: DirPermission[]) {
     { heading: 'Personalizadas', items: custom },
   ].filter((section) => section.items.length > 0)
 }
+
+const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const
 
 function formatDateTime(iso: string | null): string {
   if (!iso) return '—'
@@ -318,22 +329,41 @@ export function DirectoryConsole({
   initialContainer: DirectoryContainer
 }) {
   const router = useRouter()
+  const pathname = usePathname()
   const { me } = useSession()
   const myPermissions = me?.permissions ?? []
 
   const containers = useMemo(
     () =>
       [
-        { id: 'users' as const, label: 'Usuários', icon: Users, count: data.users.length, permission: 'admin.users' },
-        { id: 'groups' as const, label: 'Grupos', icon: Shield, count: data.groups.length, permission: 'admin.groups' },
-        { id: 'permissions' as const, label: 'Permissões', icon: KeyRound, count: data.permissions.length, permission: 'admin.groups' },
+        { id: 'users' as const, label: 'Usuários', icon: Users, count: data.users.length, permission: 'admin.users', path: '/admin/users' },
+        { id: 'groups' as const, label: 'Grupos', icon: Shield, count: data.groups.length, permission: 'admin.groups', path: '/admin/groups' },
+        { id: 'permissions' as const, label: 'Permissões', icon: KeyRound, count: data.permissions.length, permission: 'admin.groups', path: '/admin/permissions' },
       ].filter((node) => myPermissions.includes(node.permission)),
     [data, myPermissions],
   )
 
+  function navigateToContainer(node: (typeof containers)[number]) {
+    setContainer(node.id)
+    setSearch('')
+    if (pathname !== node.path) router.push(node.path)
+  }
+
   const [container, setContainer] = useState<DirectoryContainer>(initialContainer)
   const [search, setSearch] = useState('')
   const [busy, setBusy] = useState(false)
+
+  // Filtros da tabela de usuários
+  const [companyFilter, setCompanyFilter] = useState('all')
+  const [statusFilter, setStatusFilter] = useState('all')
+  const [groupFilter, setGroupFilter] = useState('all')
+  const [onlineFilter, setOnlineFilter] = useState('all')
+  const [userPage, setUserPage] = useState(1)
+  const [userPageSize, setUserPageSize] = useState<number>(PAGE_SIZE_OPTIONS[1])
+
+  // Paginação da tabela de grupos
+  const [groupPage, setGroupPage] = useState(1)
+  const [groupPageSize, setGroupPageSize] = useState<number>(PAGE_SIZE_OPTIONS[1])
 
   // Propriedades de usuário
   const [userProps, setUserProps] = useState<DirUser | null>(null)
@@ -348,6 +378,8 @@ export function DirectoryConsole({
   const [groupAllSpecs, setGroupAllSpecs] = useState(true)
   const [groupHubDocs, setGroupHubDocs] = useState(true)
   const [groupSpecSlugs, setGroupSpecSlugs] = useState<Set<string>>(new Set())
+  const [memberSearch, setMemberSearch] = useState('')
+  const [specSearch, setSpecSearch] = useState('')
 
   // Criação / confirmações
   const [createUserOpen, setCreateUserOpen] = useState(false)
@@ -364,16 +396,55 @@ export function DirectoryConsole({
   const [tempPassword, setTempPassword] = useState<{ username: string; password: string } | null>(null)
 
   const query = search.trim().toLowerCase()
+
+  const companyOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          data.users
+            .map((user) => user.company?.trim())
+            .filter((company): company is string => Boolean(company)),
+        ),
+      ).sort((a, b) => a.localeCompare(b, 'pt-BR')),
+    [data.users],
+  )
+
+  const hasUserFilters =
+    companyFilter !== 'all' || statusFilter !== 'all' || groupFilter !== 'all' || onlineFilter !== 'all'
+
   const filteredUsers = useMemo(
     () =>
-      data.users.filter(
-        (user) =>
-          !query ||
-          user.name.toLowerCase().includes(query) ||
-          user.username.toLowerCase().includes(query) ||
-          (user.email ?? '').toLowerCase().includes(query),
-      ),
-    [data.users, query],
+      data.users.filter((user) => {
+        if (
+          query &&
+          !(
+            user.name.toLowerCase().includes(query) ||
+            user.username.toLowerCase().includes(query) ||
+            (user.email ?? '').toLowerCase().includes(query)
+          )
+        ) {
+          return false
+        }
+        if (companyFilter !== 'all' && (user.company ?? '') !== companyFilter) return false
+        if (statusFilter !== 'all' && user.status !== statusFilter) return false
+        if (groupFilter !== 'all' && !user.groups.some((group) => group.id === groupFilter)) return false
+        if (onlineFilter === 'online' && !user.online) return false
+        if (onlineFilter === 'offline' && user.online) return false
+        return true
+      }),
+    [data.users, query, companyFilter, statusFilter, groupFilter, onlineFilter],
+  )
+
+  // Volta pra primeira página sempre que busca/filtros/tamanho de página mudam.
+  useEffect(() => {
+    setUserPage(1)
+  }, [query, companyFilter, statusFilter, groupFilter, onlineFilter, userPageSize])
+
+  const userTotalPages = Math.max(1, Math.ceil(filteredUsers.length / userPageSize))
+  const currentUserPage = Math.min(userPage, userTotalPages)
+  const pagedUsers = useMemo(
+    () => filteredUsers.slice((currentUserPage - 1) * userPageSize, currentUserPage * userPageSize),
+    [filteredUsers, currentUserPage, userPageSize],
   )
   const filteredGroups = useMemo(
     () =>
@@ -385,6 +456,18 @@ export function DirectoryConsole({
       ),
     [data.groups, query],
   )
+
+  useEffect(() => {
+    setGroupPage(1)
+  }, [query, groupPageSize])
+
+  const groupTotalPages = Math.max(1, Math.ceil(filteredGroups.length / groupPageSize))
+  const currentGroupPage = Math.min(groupPage, groupTotalPages)
+  const pagedGroups = useMemo(
+    () => filteredGroups.slice((currentGroupPage - 1) * groupPageSize, currentGroupPage * groupPageSize),
+    [filteredGroups, currentGroupPage, groupPageSize],
+  )
+
   const filteredPermissions = useMemo(
     () =>
       data.permissions.filter(
@@ -395,6 +478,27 @@ export function DirectoryConsole({
       ),
     [data.permissions, query],
   )
+
+  const memberQuery = memberSearch.trim().toLowerCase()
+  const filteredMemberOptions = useMemo(
+    () =>
+      data.users.filter(
+        (user) =>
+          !memberQuery ||
+          user.name.toLowerCase().includes(memberQuery) ||
+          user.username.toLowerCase().includes(memberQuery),
+      ),
+    [data.users, memberQuery],
+  )
+
+  const specQuery = specSearch.trim().toLowerCase()
+  const hubDocMatches = !specQuery || 'documentação do api hub'.includes(specQuery)
+  const filteredSpecOptions = useMemo(
+    () =>
+      data.specOptions.filter((spec) => !specQuery || spec.title.toLowerCase().includes(specQuery)),
+    [data.specOptions, specQuery],
+  )
+  const noSpecResults = specQuery !== '' && !hubDocMatches && filteredSpecOptions.length === 0
 
   function openUserProps(user: DirUser) {
     setUserProps(user)
@@ -410,6 +514,8 @@ export function DirectoryConsole({
     setGroupAllSpecs(group.allSpecs)
     setGroupHubDocs(group.hubDocs)
     setGroupSpecSlugs(new Set(group.specSlugs))
+    setMemberSearch('')
+    setSpecSearch('')
   }
 
   // -------------------------------------------------------------------------
@@ -678,10 +784,7 @@ export function DirectoryConsole({
               <li key={node.id}>
                 <button
                   type="button"
-                  onClick={() => {
-                    setContainer(node.id)
-                    setSearch('')
-                  }}
+                  onClick={() => navigateToContainer(node)}
                   className={cn(
                     'flex w-full items-center gap-2 rounded-md px-2 py-1.5 pl-6 text-left text-[13px] transition-colors',
                     container === node.id
@@ -734,7 +837,7 @@ export function DirectoryConsole({
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   {containers.map((node) => (
-                    <DropdownMenuItem key={node.id} onClick={() => setContainer(node.id)}>
+                    <DropdownMenuItem key={node.id} onClick={() => navigateToContainer(node)}>
                       <node.icon className="size-4" />
                       {node.label}
                     </DropdownMenuItem>
@@ -764,6 +867,103 @@ export function DirectoryConsole({
         </div>
 
         {container === 'users' && (
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <Select value={companyFilter} onValueChange={setCompanyFilter}>
+              <SelectTrigger size="sm" className="text-[13px]">
+                <Building2 className="size-3.5 text-muted-foreground" />
+                <SelectValue>{(value: string) => (value === 'all' ? 'Todas as empresas' : value)}</SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todas as empresas</SelectItem>
+                {companyOptions.map((company) => (
+                  <SelectItem key={company} value={company}>
+                    {company}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <SelectTrigger size="sm" className="text-[13px]">
+                <ShieldCheck className="size-3.5 text-muted-foreground" />
+                <SelectValue>
+                  {(value: string) =>
+                    value === 'active' ? 'Ativo' : value === 'disabled' ? 'Desativado' : 'Todos os status'
+                  }
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos os status</SelectItem>
+                <SelectItem value="active">
+                  <span className="size-2 shrink-0 rounded-full bg-method-get" />
+                  Ativo
+                </SelectItem>
+                <SelectItem value="disabled">
+                  <span className="size-2 shrink-0 rounded-full bg-method-delete" />
+                  Desativado
+                </SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={groupFilter} onValueChange={setGroupFilter}>
+              <SelectTrigger size="sm" className="text-[13px]">
+                <Users className="size-3.5 text-muted-foreground" />
+                <SelectValue>
+                  {(value: string) =>
+                    value === 'all'
+                      ? 'Todos os grupos'
+                      : (data.groups.find((group) => group.id === value)?.name ?? 'Grupo')
+                  }
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos os grupos</SelectItem>
+                {data.groups.map((group) => (
+                  <SelectItem key={group.id} value={group.id}>
+                    {group.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={onlineFilter} onValueChange={setOnlineFilter}>
+              <SelectTrigger size="sm" className="text-[13px]">
+                <Wifi className="size-3.5 text-muted-foreground" />
+                <SelectValue>
+                  {(value: string) =>
+                    value === 'online' ? 'Online' : value === 'offline' ? 'Offline' : 'Online e offline'
+                  }
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Online e offline</SelectItem>
+                <SelectItem value="online">
+                  <span className="size-2 shrink-0 rounded-full bg-method-get" />
+                  Online
+                </SelectItem>
+                <SelectItem value="offline">
+                  <span className="size-2 shrink-0 rounded-full bg-muted-foreground/40" />
+                  Offline
+                </SelectItem>
+              </SelectContent>
+            </Select>
+            {hasUserFilters && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="text-xs text-muted-foreground"
+                onClick={() => {
+                  setCompanyFilter('all')
+                  setStatusFilter('all')
+                  setGroupFilter('all')
+                  setOnlineFilter('all')
+                }}
+              >
+                Limpar filtros
+              </Button>
+            )}
+          </div>
+        )}
+
+        {container === 'users' && (
           <div className="overflow-x-auto rounded-lg border border-border">
             <table className="w-full min-w-[720px] text-sm">
               <thead>
@@ -784,7 +984,7 @@ export function DirectoryConsole({
                     </td>
                   </tr>
                 )}
-                {filteredUsers.map((user) => (
+                {pagedUsers.map((user) => (
                   <tr
                     key={user.id}
                     onDoubleClick={() => openUserProps(user)}
@@ -802,7 +1002,7 @@ export function DirectoryConsole({
                             title={user.online ? 'Online' : 'Offline'}
                           />
                         </span>
-                        <div className="flex min-w-0 flex-col">
+                        <div className="flex min-w-0 max-w-[200px] flex-col">
                           <span className="truncate font-medium text-foreground">{user.name}</span>
                           <span className="truncate text-[11px] text-muted-foreground">
                             {user.username}
@@ -878,6 +1078,52 @@ export function DirectoryConsole({
           </div>
         )}
 
+        {container === 'users' && filteredUsers.length > 0 && (
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+            <div className="flex items-center gap-2">
+              <span>
+                {(currentUserPage - 1) * userPageSize + 1}–
+                {Math.min(currentUserPage * userPageSize, filteredUsers.length)} de {filteredUsers.length}
+              </span>
+              <Select value={String(userPageSize)} onValueChange={(value) => setUserPageSize(Number(value))}>
+                <SelectTrigger size="sm" className="text-xs">
+                  <SelectValue>{(value: string) => `${value} / página`}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {PAGE_SIZE_OPTIONS.map((size) => (
+                    <SelectItem key={size} value={String(size)}>
+                      {size} / página
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex items-center gap-1">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={currentUserPage <= 1}
+                onClick={() => setUserPage((prev) => Math.max(1, prev - 1))}
+              >
+                Anterior
+              </Button>
+              <span className="px-1 tabular-nums">
+                {currentUserPage} / {userTotalPages}
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={currentUserPage >= userTotalPages}
+                onClick={() => setUserPage((prev) => Math.min(userTotalPages, prev + 1))}
+              >
+                Próxima
+              </Button>
+            </div>
+          </div>
+        )}
+
         {container === 'groups' && (
           <div className="overflow-x-auto rounded-lg border border-border">
             <table className="w-full min-w-[640px] text-sm">
@@ -899,7 +1145,7 @@ export function DirectoryConsole({
                     </td>
                   </tr>
                 )}
-                {filteredGroups.map((group) => (
+                {pagedGroups.map((group) => (
                   <tr
                     key={group.id}
                     onDoubleClick={() => openGroupProps(group)}
@@ -961,6 +1207,52 @@ export function DirectoryConsole({
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {container === 'groups' && filteredGroups.length > 0 && (
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+            <div className="flex items-center gap-2">
+              <span>
+                {(currentGroupPage - 1) * groupPageSize + 1}–
+                {Math.min(currentGroupPage * groupPageSize, filteredGroups.length)} de {filteredGroups.length}
+              </span>
+              <Select value={String(groupPageSize)} onValueChange={(value) => setGroupPageSize(Number(value))}>
+                <SelectTrigger size="sm" className="text-xs">
+                  <SelectValue>{(value: string) => `${value} / página`}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {PAGE_SIZE_OPTIONS.map((size) => (
+                    <SelectItem key={size} value={String(size)}>
+                      {size} / página
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex items-center gap-1">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={currentGroupPage <= 1}
+                onClick={() => setGroupPage((prev) => Math.max(1, prev - 1))}
+              >
+                Anterior
+              </Button>
+              <span className="px-1 tabular-nums">
+                {currentGroupPage} / {groupTotalPages}
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={currentGroupPage >= groupTotalPages}
+                onClick={() => setGroupPage((prev) => Math.min(groupTotalPages, prev + 1))}
+              >
+                Próxima
+              </Button>
+            </div>
           </div>
         )}
 
@@ -1174,22 +1466,35 @@ export function DirectoryConsole({
               </div>
             </TabsContent>
             <TabsContent value="members" className="pt-3">
-              <div className="flex max-h-64 flex-col gap-2 overflow-y-auto">
-                <CheckList
-                  items={data.users}
-                  selected={groupMemberIds}
-                  onToggle={(id) => setGroupMemberIds((prev) => toggleIn(prev, id))}
-                  emptyText="Nenhum usuário cadastrado."
-                  renderLabel={(user) => (
-                    <span className="flex min-w-0 flex-col">
-                      <span className="flex items-center gap-1.5 text-foreground">
-                        {user.name}
-                        {user.status === 'disabled' && <Badge variant="destructive">desativado</Badge>}
+              <div className="flex flex-col gap-2">
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    value={memberSearch}
+                    onChange={(e) => setMemberSearch(e.target.value)}
+                    placeholder="Buscar usuário..."
+                    className="h-8 pl-8 text-[13px]"
+                  />
+                </div>
+                <div className="flex max-h-64 flex-col gap-2 overflow-y-auto">
+                  <CheckList
+                    items={filteredMemberOptions}
+                    selected={groupMemberIds}
+                    onToggle={(id) => setGroupMemberIds((prev) => toggleIn(prev, id))}
+                    emptyText={
+                      memberQuery ? 'Nenhum usuário encontrado.' : 'Nenhum usuário cadastrado.'
+                    }
+                    renderLabel={(user) => (
+                      <span className="flex min-w-0 flex-col">
+                        <span className="flex items-center gap-1.5 text-foreground">
+                          {user.name}
+                          {user.status === 'disabled' && <Badge variant="destructive">desativado</Badge>}
+                        </span>
+                        <span className="font-mono text-[11px] text-muted-foreground">{user.username}</span>
                       </span>
-                      <span className="font-mono text-[11px] text-muted-foreground">{user.username}</span>
-                    </span>
-                  )}
-                />
+                    )}
+                  />
+                </div>
               </div>
             </TabsContent>
             <TabsContent value="permissions" className="pt-3">
@@ -1229,41 +1534,56 @@ export function DirectoryConsole({
                   <span className="text-foreground">Todas as specs</span>
                 </label>
                 {!groupAllSpecs && (
-                  <div className="flex max-h-48 flex-col gap-2 overflow-y-auto pl-6">
-                    {/* Pseudo-spec: a doc padrão do hub (/docs). */}
-                    <label className="flex cursor-pointer items-center gap-2 text-sm">
-                      <input
-                        type="checkbox"
-                        checked={groupHubDocs}
-                        onChange={() => setGroupHubDocs((prev) => !prev)}
-                        className="size-4 accent-brand"
+                  <div className="flex flex-col gap-2 pl-6">
+                    <div className="relative">
+                      <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                      <Input
+                        value={specSearch}
+                        onChange={(e) => setSpecSearch(e.target.value)}
+                        placeholder="Buscar spec..."
+                        className="h-8 pl-8 text-[13px]"
                       />
-                      <span className="flex items-center gap-1.5 truncate text-foreground">
-                        <BookOpen className="size-3.5 shrink-0 text-muted-foreground" />
-                        Documentação do API Hub
-                        <span className="text-[11px] text-muted-foreground">(doc padrão)</span>
-                      </span>
-                    </label>
-                    {data.specOptions.length === 0 ? (
-                      <span className="text-xs text-muted-foreground">
-                        Nenhuma outra spec registrada ainda.
-                      </span>
-                    ) : (
-                      data.specOptions.map((spec) => (
-                        <label key={spec.slug} className="flex cursor-pointer items-center gap-2 text-sm">
+                    </div>
+                    <div className="flex max-h-48 flex-col gap-2 overflow-y-auto">
+                      {/* Pseudo-spec: a doc padrão do hub (/docs). */}
+                      {hubDocMatches && (
+                        <label className="flex cursor-pointer items-center gap-2 text-sm">
                           <input
                             type="checkbox"
-                            checked={groupSpecSlugs.has(spec.slug)}
-                            onChange={() => setGroupSpecSlugs((prev) => toggleIn(prev, spec.slug))}
+                            checked={groupHubDocs}
+                            onChange={() => setGroupHubDocs((prev) => !prev)}
                             className="size-4 accent-brand"
                           />
                           <span className="flex items-center gap-1.5 truncate text-foreground">
-                            <Boxes className="size-3.5 shrink-0 text-muted-foreground" />
-                            {spec.title}
+                            <BookOpen className="size-3.5 shrink-0 text-muted-foreground" />
+                            Documentação do API Hub
+                            <span className="text-[11px] text-muted-foreground">(doc padrão)</span>
                           </span>
                         </label>
-                      ))
-                    )}
+                      )}
+                      {data.specOptions.length === 0 ? (
+                        <span className="text-xs text-muted-foreground">
+                          Nenhuma outra spec registrada ainda.
+                        </span>
+                      ) : noSpecResults ? (
+                        <span className="text-xs text-muted-foreground">Nenhuma spec encontrada.</span>
+                      ) : (
+                        filteredSpecOptions.map((spec) => (
+                          <label key={spec.slug} className="flex cursor-pointer items-center gap-2 text-sm">
+                            <input
+                              type="checkbox"
+                              checked={groupSpecSlugs.has(spec.slug)}
+                              onChange={() => setGroupSpecSlugs((prev) => toggleIn(prev, spec.slug))}
+                              className="size-4 accent-brand"
+                            />
+                            <span className="flex items-center gap-1.5 truncate text-foreground">
+                              <Boxes className="size-3.5 shrink-0 text-muted-foreground" />
+                              {spec.title}
+                            </span>
+                          </label>
+                        ))
+                      )}
+                    </div>
                   </div>
                 )}
               </div>

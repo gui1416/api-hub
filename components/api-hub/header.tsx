@@ -1,7 +1,7 @@
 'use client'
 
 import { Boxes, Menu, Search } from 'lucide-react'
-import { LogoutButton } from './logout-button'
+import { NavUser } from './nav-user'
 import { ThemeToggle } from './theme-toggle'
 
 export function Header({
@@ -60,7 +60,7 @@ export function Header({
           </kbd>
         </button>
         <ThemeToggle />
-        <LogoutButton />
+        <NavUser />
       </div>
     </header>
   )
